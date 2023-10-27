@@ -25,6 +25,7 @@ public:
     static void  dump(String name, uint8_t* data, uint16_t cnt);
     static void  log(...);
     static float mapf(float x, float in_min, float in_max, float out_min, float out_max);
+    static int   hex2string(uint8_t *in, int inlen, char *out);
 };
 
 #endif

@@ -2,8 +2,6 @@
 #define _YDLIDAR_X2_H_
 #include <ESP32Servo.h>
 #include "config.h"
-#include "FastPID.h"
-
 
 /*
 *****************************************************************************************
@@ -30,15 +28,9 @@ typedef enum {
 */
 class YDLidarX2 {
 public:
-    struct _scan {
-        uint16_t    dist;
-        uint16_t    quality;
-    };
-
     struct _scan_frame {
-        long         ts;
-        uint16_t     rpm;
-        struct _scan scans[360];
+        unsigned long   ts;
+        uint16_t        scans[720];
     };
 
     typedef struct {
@@ -61,8 +53,8 @@ public:
     uint8_t  getPwm()       { return _pwm_duty; }
 
 private:
-    int  decodePacket(uint8_t *buf, uint16_t len);
-    uint16_t calcChecksum(uint8_t *buf);
+    int      decodePacket(uint8_t *buf, uint16_t len);
+    uint16_t calcCheksum(uint8_t *data, uint16_t len);
 
     typedef enum {
         PKT_IDLE = 0,
@@ -74,11 +66,9 @@ private:
     bool                _enabled;
     uint8_t             _pkt_pos;
     uint8_t             _pkt_len;
-    uint8_t             _pkt_buf[100];
+    uint8_t             _pkt_buf[120];
     pkt_state_t         _pkt_state;
-    pkt_header_t        _pkt_hdr;
-
-    ESP32PWM            *_pPwm;
+    uint8_t             _pkt_dlen;
 
     struct _scan_frame  _frames[5];
     uint8_t             _frame_in;
@@ -86,9 +76,7 @@ private:
     uint8_t             _frame_ctr;
 
     uint8_t             _pwm_duty;
-    uint16_t            _rpm_cur;
-    uint16_t            _rpm_tgt;
-    FastPID             _pid_rpm;
+    ESP32PWM            *_pPwm;
 };
 
 #endif

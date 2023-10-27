@@ -39,3 +39,14 @@ float Utils::mapf(float x, float in_min, float in_max, float out_min, float out_
 
     return (delta * dividend) / divisor + out_min;
 }
+
+
+int Utils::hex2string(uint8_t *in, int inlen, char *out) {
+    int i = 0;
+    char *pos = out;
+
+    for (i = 0; i < inlen; i++)
+        pos += sprintf(pos, "%02X ", in[i]);
+
+    return pos - out + 1;
+}
