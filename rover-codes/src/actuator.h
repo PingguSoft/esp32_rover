@@ -29,11 +29,11 @@ typedef struct {
     float           theta;      // radian
 } __attribute__((packed)) pose_t;
 
-// typedef struct {
-//     unsigned long   millis;     // ms
-//     long            left;       // ticks
-//     long            right;      // ticks
-// } __attribute__((packed)) odometry_t;
+typedef struct {
+    unsigned long   millis;     // ms
+    long            left;       // ticks
+    long            right;      // ticks
+} __attribute__((packed)) odometry_t;
 
 /*
 *****************************************************************************************
@@ -53,6 +53,7 @@ public:
     void    setup();
     void    setMotor(int speedL, int speedR);
     void    drive(int angle, int speed);
+    void    getOdometry(odometry_t *pOdometry);
     void    getPose(pose_t* pPose);
     void    resetPose();
     void    calibrate(int key);

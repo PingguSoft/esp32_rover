@@ -2,7 +2,6 @@
 #define _WHEEL_DRIVER_H_
 #include <ESP32Servo.h>
 #include "config.h"
-#include "VecRot.h"
 
 
 /*
@@ -35,7 +34,7 @@ public:
     WheelDriver(int8_t pin_esc, int8_t pin_ctr, int8_t pin_ctr_dir);                                    // ESC
     WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_ctr, int8_t pin_ctr_dir);                    // DRV8833
     WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t pin_ctr, uint8_t pin_ctr_dir);   // TB6612FNG
-    void setup();
+    void setup(bool reverse=false);
     void setSpeed(int speed);
     int  getSpeed()             { return _speed; }
 
@@ -54,6 +53,7 @@ private:
     long     _ticks_mult;
 
     uint8_t  _type;
+    bool     _reverse;
     int8_t   _pin_in1;
     int8_t   _pin_in2;
     int8_t   _pin_pwm;
@@ -67,6 +67,5 @@ private:
 
     // for counting instances
     static uint8_t _num;
-    static const uint8_t _tblSpeed[];
 };
 #endif

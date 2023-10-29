@@ -108,6 +108,12 @@ void Actuator::getDelta(Odometry &odo, float *dtheta, float *dist) {
     *dist   = (dist_r + dist_l) / 2;
 }
 
+void Actuator::getOdometry(odometry_t *pOdometry) {
+    pOdometry->millis = millis();
+    pOdometry->left   = _pDriver[IDX_LWHEEL]->getTicks();
+    pOdometry->right  = _pDriver[IDX_RWHEEL]->getTicks();
+}
+
 void Actuator::getPose(pose_t *pPose) {
     _last_odo = _odo;
 

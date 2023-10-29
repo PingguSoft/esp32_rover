@@ -11,65 +11,132 @@
 #include "ControlStick.h"
 #include "actuator.h"
 #include "ydlidar_x2.h"
+#include "wifi_service.h"
 using namespace std::placeholders;
 
 /*
 *****************************************************************************************
-* VARIABLES
+* CONSTANTS
 *****************************************************************************************
 */
-static ControlStick     _joy;
-static Timer<>          _timer = timer_create_default();
-
-struct param_rc {
-    int16_t  roll;
-    int16_t  pitch;
-    int16_t  yaw;
-    int16_t  throttle;
-    int16_t  aux[10];
-    uint8_t  flag;
-} __attribute__((packed));
+#define FORWARD_NONE    0
+#define FORWARD_SERIAL  1
+#define FORWARD_WIFI    2
+#define DEBUG_FORWARD   FORWARD_WIFI
 
 
 /*
 *****************************************************************************************
-* CLASS Car
+* CLASS SerialService
 *****************************************************************************************
 */
-class Car {
+#if (DEBUG_FORWARD == FORWARD_SERIAL)
+class SerialService  : public MSPInterface, public CommService {
 public:
-    Car(int option) {
-        _option = option;
+    SerialService() {
     }
 
-    virtual void setup() = 0;
-    virtual void stick(int yaw, int throttle, int pitch, int roll, int btn) = 0;
-    virtual void loop() { }
+    //
+    // MSPInterface implementation
+    //
+    virtual void write(uint8_t *pBuf, uint16_t size) {
+        uint16_t frag;
+        uint8_t  *data = pBuf;
 
-protected:
-    int _option;
+        while (size > 0) {
+            frag = (size > 512) ? 512 : size;
+            Serial.write(data, frag);
+            data += frag;
+            size -= frag;
+        }
+    }
+
+    //
+    // CommService implementation
+    //
+    void setup(char *ssid, char *password, int port, MSPCallback *cb) {
+        _queue_comm  = xQueueCreate(5, sizeof(comm_q_t));
+        xTaskCreate(&task_comm, "task_comm", 2560, this, 8, NULL);
+
+        _pMSP = new MSP(1300);
+        _pMSP->setInterface(this);
+        _pMSP->setCallback(cb);
+    }
+
+    void send(cmd_t cmd, uint8_t *buf, uint16_t size, bool reqBufDel=pdFALSE, bool reqSeqHeader=pdFALSE) {
+        comm_q_t q = { cmd, buf, size, reqBufDel, reqSeqHeader };
+        xQueueSend(_queue_comm, &q, portMAX_DELAY);
+    }
+
+    //
+    //
+    //
+    static void task_comm(void* arg) {
+        SerialService *pSvc = (SerialService*)arg;
+        comm_q_t *q = new comm_q_t;
+
+        LOG("task comm started\n");
+        while (true) {
+            if (xQueueReceive(pSvc->_queue_comm, q, portMAX_DELAY) == pdTRUE) {
+                pSvc->_pMSP->send(q->cmd, q->pData, q->size);
+                if (q->reqBufDel)
+                    delete q->pData;
+            }
+        }
+        delete q;
+        vTaskDelete(NULL);
+    }
+
+private:
+    MSP          *_pMSP;
+    QueueHandle_t _queue_comm;
 };
-
+#endif
 
 /*
 *****************************************************************************************
-* CLASS Tank
+* CLASS Vehicle
 *****************************************************************************************
 */
-class Tank : public Car {
+static const uint8_t _tblSpeed[27] = {
+        0,  50,  60,  70,  80,  90, 100, 110, 115, 120,
+    125, 130, 135, 140, 145, 150, 155, 160, 165, 170,
+    175, 180, 185, 190, 195, 200, 205
+};
+
+class Vehicle : public MSPCallback, public StickCallback {
 private:
     Actuator *_pActuator;
+    int       _oldBtn;
+    int       _mode;
+
+#if (DEBUG_FORWARD == FORWARD_SERIAL)
+    SerialService   _service;
+#elif (DEBUG_FORWARD == FORWARD_WIFI)
+    WiFiService     _service;
+#endif
 
 public:
-    Tank(int option) : Car(option) {
+    Vehicle(int option) {
         _pActuator = new Actuator(new WheelDriver(PIN_L_DRV_IN1, PIN_L_DRV_IN2, PIN_L_CTR, PIN_NONE),
                                   new WheelDriver(PIN_R_DRV_IN1, PIN_R_DRV_IN2, PIN_R_CTR, PIN_NONE));
+        _oldBtn      = 0;
+        _mode        = 0;
     }
 
     void setup() {
         pinMode(PIN_DRV_EN, OUTPUT);
         digitalWrite(PIN_DRV_EN, HIGH);
         _pActuator->setup();
+        _service.setup((char*)WIFI_SSID, (char*)WIFI_PASSWORD, 8080, this);
+    }
+
+    CommService *getComm() {
+#if (DEBUG_FORWARD == FORWARD_NONE)
+        return NULL;
+#else
+        return &_service;
+#endif
     }
 
     void command(int m) {
@@ -113,40 +180,99 @@ public:
         }
     }
 
-    void stick(int yaw, int throttle, int pitch, int roll, int btn) {
-#if 1
-        int speedL = map(throttle, 1000, 2000, -255, 255);
-        int speedR = map(pitch,    1000, 2000, -255, 255);
-        _pActuator->setMotor(speedL, speedR);
-#else
-        int angle;
-        int speed1, speed;
+    int16_t limitSpeed(int speed) {
+        uint8_t  spd = abs(speed);
+        uint8_t  idx = spd / 10;
+        uint8_t  rem = spd % 10;
+        float step  = (_tblSpeed[idx + 1] - _tblSpeed[idx]) / 10;
+        uint8_t out = _tblSpeed[idx] + uint8_t(rem * step);
 
-        pitch -= 1500;
-        roll -= 1500;
-        speed1 = constrain(sqrt(pitch * pitch + roll * roll), 0, 500);
-        angle = (roll == 0) ? 0 : (90 - degrees(atan2((float)pitch, (float)roll)));
-        speed = map(speed1, 0, 500, 0, MOTOR_PWM_LIMIT);
+    #ifdef MOTOR_PWM_LIMIT
+        out = map(out, 0, 255, 0, MOTOR_PWM_LIMIT);
+    #endif
+        return (speed < 0) ? -out : out;
+    }
 
-        if (speed > 0) {
-            LOG("pit:%6d, rol:%6d, ang:%6d, speed:%6d => %6d\n", pitch, roll, angle, speed1, speed);
+    void drive(int angle, int speed) {
+        int speedL;
+        int speedR;
+
+        if (angle >= 0) {
+            float rad = radians(angle);
+            speedL = speed;
+            speedR = speed * cos(rad);
+        } else {
+            float rad = radians(-angle);
+            speedL = speed * cos(rad);
+            speedR = speed;
         }
-        _actuator.drive(angle, speed);
-#endif
+        LOG("ang:%6d,  spd:%6d, %6d\n", angle, speedL, speedR);
+        _pActuator->setMotor(speedL, speedR);
     }
-};
 
+    #define BTN_SHIFT_L         _BV(ControlStick::BTN_L2)
+    #define BTN_SHIFT_R         _BV(ControlStick::BTN_R2)
+    #define BTN_MODE0           _BV(ControlStick::BTN_A)
+    #define BTN_MODE1           _BV(ControlStick::BTN_B)
 
-/*
-*****************************************************************************************
-* CLASS StickCB
-*****************************************************************************************
-*/
-class StickCB : public StickCallback {
-public:
-    StickCB(Car* car) {
-        _pCar = car;
+    bool isSet(int shift, int state, int checkBtn) {
+        int shiftMask  = checkBtn & (BTN_SHIFT_L | BTN_SHIFT_R);
+
+        if (shiftMask != shift)
+            return false;
+
+        state &= ~(BTN_SHIFT_L | BTN_SHIFT_R);    // clear shift mask
+        return bool(state & checkBtn);
     }
+
+    void stick(int yaw, int throttle, int pitch, int roll, int btn) {
+        int  toggled = (btn ^ _oldBtn);
+        int  shift   = btn & (BTN_SHIFT_L | BTN_SHIFT_R);
+
+        if (isSet(shift, toggled, BTN_MODE0)) {
+            if (btn & BTN_MODE0) {
+                _mode = 0;
+                LOG("mode:%d\n", _mode);
+            }
+        }
+        if (isSet(shift, toggled, BTN_MODE1)) {
+            if (btn & BTN_MODE1) {
+                _mode = 1;
+                LOG("mode:%d\n", _mode);
+            }
+        }
+
+        if (_mode == 0) {
+            int speedL = map(throttle, 1000, 2000, -255, 255);
+            int speedR = map(pitch,    1000, 2000, -255, 255);
+            _pActuator->setMotor(limitSpeed(speedL), limitSpeed(speedR));
+        } else if (_mode == 1) {
+            int angle = map(yaw,   1000, 2000,  -60,  60);
+            int speed = map(pitch, 1000, 2000, -255, 255);
+            drive(angle, speed);
+        }
+
+        _oldBtn = btn;
+    }
+
+    //
+    // MSPCallback implementation
+    //
+    virtual int16_t onCommand(uint8_t cmd, uint8_t *pData, uint16_t size, uint8_t *pRes) {
+        return 0;
+    }
+
+    //
+    // StickCallback implementation
+    //
+    struct param_rc {
+        int16_t  roll;
+        int16_t  pitch;
+        int16_t  yaw;
+        int16_t  throttle;
+        int16_t  aux[10];
+        uint8_t  flag;
+    } __attribute__((packed));
 
     void onConnect() {
     }
@@ -169,33 +295,54 @@ public:
             1
         };
 
-        static const uint8_t _kTblDPadMap[] = {
-            0x00,
-            0x01,   // up
-            0x03,
-            0x02,   // right
-            0x06,
-            0x04,   // down
-            0x0c,
-            0x08,   // left
-            0x09,
-        };
-
         rc.yaw = filterDeadZone(map(axisX, 0, 1024, 1000, 2000));
         rc.throttle = filterDeadZone(map(axisY, 0, 1024, 2000, 1000));
         rc.roll = filterDeadZone(map(axisZ, 0, 1024, 1000, 2000));
         rc.pitch = filterDeadZone(map(axisRZ, 0, 1024, 2000, 1000));
-
-        uint8_t  dp = (dpad > 8) ? 0 : _kTblDPadMap[dpad];
-        uint32_t btn = (int(dp) << 16) | btns;
-
-        _pCar->stick(rc.yaw, rc.throttle, rc.pitch, rc.roll, btn);
+        stick(rc.yaw, rc.throttle, rc.pitch, rc.roll, btns);
     }
-
-private:
-    Car*    _pCar;
-    float   _speedSmooth;
 };
+
+
+/*
+*****************************************************************************************
+* task_lidar
+*****************************************************************************************
+*/
+void task_lidar(void* arg) {
+    YDLidarX2   *pLidar = new YDLidarX2();
+    YDLidarX2::scan_frame_t *pFrame;
+    CommService *pSvc = (CommService*)arg;
+
+    LOG("task lidar started\n");
+    pLidar->setup();
+    pLidar->enable(true);
+    while (true) {
+        lidar_state_t state = pLidar->process();
+        switch (state) {
+            case LIDAR_NO_PROCESS:
+                vTaskDelay(pdMS_TO_TICKS(20));
+                break;
+
+            case LIDAR_SCAN_COMPLETED:
+                pFrame = pLidar->getScans();
+                if (pSvc && pFrame)
+                    pSvc->send(CMD_LIDAR, (uint8_t*)pFrame, sizeof(YDLidarX2::scan_frame_t));
+                break;
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+
+/*
+*****************************************************************************************
+* VARIABLES
+*****************************************************************************************
+*/
+static ControlStick     _joy;
+static Timer<>          _timer = timer_create_default();
+static Vehicle*         _pCar = new Vehicle(0);
 
 
 /*
@@ -203,11 +350,6 @@ private:
 * setup
 *****************************************************************************************
 */
-static Car* _pCar = new Tank(0);
-static StickCB _cb(_pCar);
-
-static YDLidarX2 lidar;
-
 static bool checkTurnLight(void* param) {
     digitalWrite(PIN_LED, !digitalRead(PIN_LED));
     return true;
@@ -222,13 +364,13 @@ void setup() {
     LOG("setup start !!! : heap:%d, psram:%d\n", ESP.getFreeHeap(), ESP.getPsramSize());
     pinMode(PIN_LED, OUTPUT);
 
+    _pCar->setup();
+    xTaskCreate(&task_lidar, "task_lidar", 2048, _pCar->getComm(), 2, NULL);
+
     _timer.every(500, checkTurnLight);
-    _joy.setStickCallback(&_cb);
+    _joy.setStickCallback(_pCar);
     _joy.addSupportedDevices();
     _joy.begin();
-    _pCar->setup();
-    lidar.setup();
-    lidar.enable(true);
 }
 
 /*
@@ -246,6 +388,5 @@ void loop() {
         }
     }
     _timer.tick();
-    //_pCar->loop();
-    lidar.process();
+    _pCar->loop();
 }

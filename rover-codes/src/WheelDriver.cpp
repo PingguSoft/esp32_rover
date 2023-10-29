@@ -13,11 +13,7 @@
 * CONSTANTS
 *****************************************************************************************
 */
-const uint8_t WheelDriver::_tblSpeed[27] = {
-        0,  50,  60,  70,  80,  90, 100, 110, 115, 120,
-    125, 130, 135, 140, 145, 150, 155, 160, 165, 170,
-    175, 180, 185, 190, 195, 200, 205
-};
+
 
 /*
 *****************************************************************************************
@@ -124,8 +120,9 @@ WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t 
     _unit = _num++;
 }
 
-void WheelDriver::setup() {
+void WheelDriver::setup(bool reverse) {
     _speed = 0;
+    _reverse = reverse;
     if (_type == ESC) {
         _pESC = new Servo();
         _pESC->attach(_pin_esc, 1000, 2000);
@@ -154,10 +151,10 @@ void WheelDriver::setup() {
     }
 
     if (_pin_ctr_dir != PIN_NONE)
-        pinMode(_pin_ctr_dir, INPUT_PULLUP);
+        pinMode(_pin_ctr_dir, INPUT);
 
     if (_pin_ctr != PIN_NONE) {
-        pinMode(_pin_ctr, INPUT_PULLUP);
+        pinMode(_pin_ctr, INPUT);
         initPCNT((pcnt_unit_t)_unit, _pin_ctr, _pin_ctr_dir, PCNT_CHANNEL_0, _k_ctr_limit, -_k_ctr_limit);
         pcnt_isr_service_install(0);
         pcnt_isr_handler_add((pcnt_unit_t)_unit, isrHandlerPCNT, (void*)this);
@@ -181,12 +178,12 @@ void WheelDriver::setSpeed(int speed) {
 
     switch (_type) {
         case ESC:
-            spd = map(speed, -255, 255, 1000, 2000);
+             spd = _reverse ? map(speed, -255, 255, 2000, 1000) : map(speed, -255, 255, 1000, 2000);
             _pESC->writeMicroseconds(spd);
             break;
 
         case DRV8833:
-            spd = limitSpeed(abs(speed));
+            spd = abs(speed);
             if (speed >= 0) {
                 _pPwm[0]->write(spd);
                 _pPwm[1]->write(0);
@@ -207,21 +204,11 @@ void WheelDriver::setSpeed(int speed) {
                 digitalWrite(_pin_in1, HIGH);
                 digitalWrite(_pin_in2, LOW);
             }
-            spd = limitSpeed(abs(speed));
+            spd = abs(speed);
             _pPwm[0]->write(spd);
             break;
     }
     _speed = speed;
-}
-
-uint8_t WheelDriver::limitSpeed(int speed) {
-    uint8_t idx = speed / 10;
-    uint8_t rem = speed % 10;
-    float step  = (_tblSpeed[idx + 1] - _tblSpeed[idx]) / 10;
-
-    uint8_t out = _tblSpeed[idx] + uint8_t(rem * step);
-    out = map(out, 0, 255, 0, MOTOR_PWM_LIMIT);
-    return out;
 }
 
 long WheelDriver::getTicks() {

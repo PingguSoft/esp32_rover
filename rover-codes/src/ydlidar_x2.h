@@ -28,10 +28,11 @@ typedef enum {
 */
 class YDLidarX2 {
 public:
-    struct _scan_frame {
+    typedef struct {
         unsigned long   ts;
-        uint16_t        scans[720];
-    };
+        uint16_t        scan_num;
+        uint16_t        scans[600];
+    } __attribute__((packed)) scan_frame_t;
 
     typedef struct {
         uint16_t    sync;
@@ -46,7 +47,8 @@ public:
 
     void setup();
     lidar_state_t process();
-    bool getOutput(struct _scan_frame *frame);
+    bool getScans(scan_frame_t *frame);
+    scan_frame_t *getScans();
     void enable(bool en);
     bool isEnabled()        { return _enabled; }
     uint8_t *getRawBuf()    { return _pkt_buf; }
@@ -70,7 +72,7 @@ private:
     pkt_state_t         _pkt_state;
     uint8_t             _pkt_dlen;
 
-    struct _scan_frame  _frames[5];
+    scan_frame_t        _frames[10];
     uint8_t             _frame_in;
     uint8_t             _frame_out;
     uint8_t             _frame_ctr;

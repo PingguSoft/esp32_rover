@@ -94,6 +94,33 @@ public:
     }
 };
 
+void ControlStick::getHIDItemInfo(int page, int usage, HID_ReportItem_t **pInfo) {
+    int16_t off  = -1;
+    uint8_t bits =  0;
+
+    for (int i = 0; i < _hidReport.TotalReportItems; i++) {
+        HID_ReportItem_t* it = &_hidReport.ReportItems[i];
+
+        if (it->Attributes.Usage.Page == page && it->Attributes.Usage.Usage == usage) {
+            *pInfo = it;
+            break;
+        }
+
+        if (page == 9 && it->Attributes.Usage.Page == page) {
+            if (off == -1) {
+                *pInfo = it;
+                off = it->BitOffset;
+            }
+            bits += it->Attributes.BitSize;
+        }
+    }
+
+    if (off >= 0 && bits > 0) {
+        (*pInfo)->BitOffset = off;
+        (*pInfo)->Attributes.BitSize = bits;
+    }
+}
+
 bool ControlStick::connect() {
     if (_pServerAddress == nullptr) {
         return false;
@@ -159,6 +186,23 @@ bool ControlStick::connect() {
                 if (_nConnTryCtr > 2) {
                     for(NimBLERemoteCharacteristic *it: chars) {
                         LOG("chars:%s\n", it->getUUID().toString().c_str());
+                    }
+                }
+
+                // HID device?
+                if (_uuidFoundService.equals(BLEUUID("1812"))) {
+                    // get hid repoort map
+                    _pRemoteCharacteristic = pRemoteService->getCharacteristic(BLEUUID("2A4B"));
+                    if (_pRemoteCharacteristic->canRead()) {
+                        std::string str = _pRemoteCharacteristic->readValue(nullptr);
+                        //DUMP("2A4B", (uint8_t*)str.c_str(), str.length());
+                        USB_ProcessHIDReport((uint8_t*)str.c_str(), str.length(), &_hidReport);
+                        getHIDItemInfo(1, 0x30, &_hidItemInfo[0]);  // X
+                        getHIDItemInfo(1, 0x31, &_hidItemInfo[1]);  // Y
+                        getHIDItemInfo(1, 0x32, &_hidItemInfo[2]);  // Z
+                        getHIDItemInfo(1, 0x35, &_hidItemInfo[3]);  // RZ
+                        getHIDItemInfo(1, 0x39, &_hidItemInfo[4]);  // hat
+                        getHIDItemInfo(9, 0x00, &_hidItemInfo[5]);  // buttons
                     }
                 }
 
@@ -246,7 +290,7 @@ void ControlStick::add(BLEAddress* addr, BLEUUID uuidService, BLEUUID uuidCharac
 */
 void ControlStick::addSupportedDevices() {
     // PG-9167
-    add(nullptr, BLEUUID("1812"), BLEUUID("2A4D"), std::bind(&ControlStick::cbControlStickBLE, this, _1, _2, _3, _4));
+    add(nullptr, BLEUUID("1812"), BLEUUID("2A4D"), std::bind(&ControlStick::cbHidBLE, this, _1, _2, _3, _4));
 
     // flypad
     add(nullptr, BLEUUID("9e35fa00-4344-44d4-a2e2-0c7f6046878b"),
@@ -257,23 +301,50 @@ void ControlStick::addSupportedDevices() {
         BLEUUID("00008651-0000-1000-8000-00805f9b34fb"), std::bind(&ControlStick::cbGameSirT1DBLE, this, _1, _2, _3, _4));
 }
 
-void ControlStick::cbControlStickBLE(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
-    //             0  1  2  3  4  5  6  7  8  9
-    // 00000000 - 80 80 80 80 ff 00 00 00 00 e2
-    //            LA LA RA RA dp B1 B2
-    //            LR UD LR UD
+void ControlStick::parseHIDData(uint8_t *pData) {
+    HID_ReportItem_t *p;
+
+    for (int i = 0; i < 6; i++) {
+        p = _hidItemInfo[i];
+        int16_t  off  = p->BitOffset;
+        uint8_t  bits = p->Attributes.BitSize;
+        uint32_t mask = (1 << 0);
+
+        p->Value = 0;
+        while (bits--) {
+            if (pData[off / 8] & (1 << (off % 8)))
+              p->Value |= mask;
+
+            off++;
+            mask <<= 1;
+        }
+    }
+}
+
+int ControlStick::getHIDValue(int idx) {
+    int valMax = (1L << _hidItemInfo[idx]->Attributes.BitSize);
+    int val    = (_hidItemInfo[idx]->Value > _hidItemInfo[idx]->Attributes.Logical.Maximum) ? -(valMax - _hidItemInfo[idx]->Value) : _hidItemInfo[idx]->Value;
+
+    return map(val, _hidItemInfo[idx]->Attributes.Logical.Minimum, _hidItemInfo[idx]->Attributes.Logical.Maximum, 0, 1023);
+}
+
+void ControlStick::cbHidBLE(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
     //
-    //            7    6    5    4    3    2    1    0
-    // B1  bits: R1   L1         Y    X         B    A
-    // B2  bits:      RTH  LTH      START SEL  R2   L2
-    // dp   val: none-0xff up-0, r-1, d-2, l-3
+    // HID
+    //
+    parseHIDData(pData);
 
-    int btns = (int(pData[6]) << 8) | int(pData[5]);
-    int dpad = pData[4] + 1;
-
-    // 8bits -> 10bits
-    if (_pStickCallback)
-        _pStickCallback->onStickChanged(int(pData[0]) << 2, int(pData[1]) << 2, int(pData[2]) << 2, int(pData[3]) << 2, 0, 0, dpad, btns);
+    if (_pStickCallback) {
+        //DUMP("rx", pData, length);
+        int llr  = getHIDValue(0);
+        int lud  = getHIDValue(1);
+        int rlr  = getHIDValue(2);
+        int rud  = getHIDValue(3);
+        int dpad = (_hidItemInfo[4]->Value - _hidItemInfo[4]->Attributes.Logical.Minimum) & 0x0f;
+        int btns = _hidItemInfo[5]->Value;
+        //LOG("%6d, %6d, %6d, %6d, %2d, %04x\n", llr, lud, rlr, rud, dpad, btns);
+        _pStickCallback->onStickChanged(llr, lud, rlr, rud, 0, 0, dpad, btns);
+    }
 }
 
 void ControlStick::cbFlyPadBLE(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
@@ -298,7 +369,7 @@ void ControlStick::cbFlyPadBLE(NimBLERemoteCharacteristic* pBLERemoteCharacteris
             setBit(getBit(btns,  9), BTN_LTHUMB) |
             setBit(getBit(btns, 10), BTN_RTHUMB);
 
-    // 8bits -> 10bits
+    // 8bits -> 10bits (0 ~ 1023)
     if (_pStickCallback)
         _pStickCallback->onStickChanged(int(pData[5]) << 2, int(pData[6]) << 2, int(pData[3]) << 2, int(pData[4]) << 2, 0, 0, 0, btns);
 }

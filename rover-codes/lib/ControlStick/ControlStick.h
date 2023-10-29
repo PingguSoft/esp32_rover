@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include "HIDParser.h"
 
 /*
 *****************************************************************************************
@@ -87,10 +88,12 @@ protected:
     boolean                     _isConnecting;
     boolean                     _isConnected;
     BLERemoteCharacteristic*    _pRemoteCharacteristic;
+    HID_ReportInfo_t            _hidReport;
+    HID_ReportItem_t            *_hidItemInfo[6];
 
     StickCallback*              _pStickCallback;
 
-    void cbControlStickBLE(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify);
+    void cbHidBLE(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify);
     void cbFlyPadBLE(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify);
     void cbGameSirT1DBLE(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify);
 
@@ -98,6 +101,10 @@ protected:
 private:
     int getBit(int val, int bit) { return ((val >> bit) & 1); }
     int setBit(int val, int bit) { return (val << bit);       }
+
+    void getHIDItemInfo(int page, int usage, HID_ReportItem_t **pInfo);
+    void parseHIDData(uint8_t *pData);
+    int  getHIDValue(int idx);
 
     BLEUUID                     _uuidFoundService;
     int                         _nFoundIdx;
