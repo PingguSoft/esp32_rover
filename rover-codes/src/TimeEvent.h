@@ -3,7 +3,9 @@
 
 #include <Arduino.h>
 
-#define LOG(...)    printf(__VA_ARGS__)
+#ifndef LOG
+#define LOG(...)
+#endif
 
 class TimeEvent {
 private:
@@ -44,6 +46,7 @@ public:
         if (idx == -1) {
             if (_evts >= _max_evts) {
                 LOG("increase max TimeEvent\n");
+                return false;
             } else {
                 LOG("new interval : %d\n", interval);
                 _pEvts[_evts++].interval = interval;

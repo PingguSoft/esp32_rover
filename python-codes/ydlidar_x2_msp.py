@@ -6,6 +6,7 @@ import struct
 import math
 from msp import MSP
 
+
 class LidarX2(object):
     def __init__(self, port, host=None, sceen=None):
         self._port = port
@@ -90,7 +91,7 @@ class LidarX2(object):
             frame['ts'], frame['scan_num'] = struct.unpack('<LH', data[0:6])
             for i in range(self._max_scans):
                 frame['scans'][i] = struct.unpack('<H', data[6+2*i:8+2*i])[0]
-            print(f"{frame['scan_num']}")
+            print(f"{frame['ts']:8d} : {frame['scan_num']:3d}")
             self.draw(self._screen, frame)
 
 

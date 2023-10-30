@@ -7,5 +7,9 @@
 			"path": "python-codes"
 		}
 	],
-    "settings": {}
+	"settings": {
+		"files.associations": {
+			"new": "cpp"
+		}
+	}
 }

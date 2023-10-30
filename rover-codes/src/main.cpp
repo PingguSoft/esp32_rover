@@ -1,8 +1,6 @@
 #include <Arduino.h>
 #include <ESP32Servo.h>
 #include <math.h>
-#include <arduino-timer.h>
-#include "driver/pcnt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 #include "freertos/task.h"
@@ -113,7 +111,6 @@ static const uint8_t _tblSpeed[27] = {
 class Vehicle : public MSPCallback, public StickCallback {
 private:
     Actuator       *_pActuator;
-    int             _oldBtn;
     int             _mode;
     ButtonTracker   _btn_trk;
     TimeEvent       _evt;
@@ -127,10 +124,11 @@ private:
 public:
     Vehicle(int option) : _btn_trk(BTN_SHIFT_L | BTN_SHIFT_R), _evt(5)
     {
-        _pActuator = new Actuator(new WheelDriver(PIN_L_DRV_IN1, PIN_L_DRV_IN2, PIN_L_CTR, PIN_NONE, false),
-                                  new WheelDriver(PIN_R_DRV_IN1, PIN_R_DRV_IN2, PIN_R_CTR, PIN_NONE, false));
-        _oldBtn      = 0;
-        _mode        = 0;
+        _mode      = 0;
+        _pActuator = new Actuator(
+                        new WheelDriver(PIN_L_DRV_IN1, PIN_L_DRV_IN2, PIN_L_CTR, PIN_NONE, false, WHEEL_RADIUS_MM, TICKS_PER_CYCLE),
+                        new WheelDriver(PIN_R_DRV_IN1, PIN_R_DRV_IN2, PIN_R_CTR, PIN_NONE, false, WHEEL_RADIUS_MM, TICKS_PER_CYCLE),
+                        AXLE_WIDTH_MM);
     }
 
     void setup() {
@@ -187,6 +185,15 @@ public:
             //command(ch);
             _pActuator->calibrate(ch);
         }
+
+        if (_evt.every(100)) {
+            static Odometry::odometry_t odo;
+
+            odo = _pActuator->updateOdometry()->get();
+            LOGI("odo: x:%5d, y:%5d, theta:%5.1f\n", odo.x, odo.y, degrees(odo.theta));
+            _service.send(CMD_ODOMETRY, (uint8_t*)&odo, sizeof(odo));
+        }
+
         _evt.tick();
     }
 
@@ -220,8 +227,8 @@ public:
             int speedR = map(pitch,    1000, 2000, -255, 255);
             _pActuator->setMotor(limitSpeed(speedL), limitSpeed(speedR));
         } else if (_mode == 1) {
-            int angle = map(yaw,   1000, 2000,  -60,  60);
-            int speed = map(pitch, 1000, 2000, -255, 255);
+            int angle = map(roll,     1000, 2000,  -60,  60);
+            int speed = map(throttle, 1000, 2000, -255, 255);
             _pActuator->drive(angle, limitSpeed(speed));
         }
 
@@ -299,8 +306,10 @@ void task_lidar(void* arg) {
 
             case LIDAR_SCAN_COMPLETED:
                 pFrame = pLidar->getScans();
-                if (pSvc && pFrame)
+                if (pSvc && pFrame) {
+                    // LOG("> scans:%3d\n", pFrame->scan_num);
                     pSvc->send(CMD_LIDAR, (uint8_t*)pFrame, sizeof(YDLidarX2::scan_frame_t));
+                }
                 break;
         }
     }
@@ -314,7 +323,6 @@ void task_lidar(void* arg) {
 *****************************************************************************************
 */
 static ControlStick     _joy;
-// static Timer<>          _timer = timer_create_default();
 static TimeEvent        _evt(5);
 static Vehicle*         _pCar = new Vehicle(0);
 
@@ -324,9 +332,8 @@ static Vehicle*         _pCar = new Vehicle(0);
 * setup
 *****************************************************************************************
 */
-static bool blinkLed(void* param) {
+void blinkLed() {
     digitalWrite(PIN_LED, !digitalRead(PIN_LED));
-    return true;
 }
 
 void setup() {
@@ -341,7 +348,6 @@ void setup() {
     _pCar->setup();
     xTaskCreate(&task_lidar, "task_lidar", 2048, _pCar->getComm(), 2, NULL);
 
-    // _timer.every(500, blinkLed);
     _joy.setStickCallback(_pCar);
     _joy.addSupportedDevices();
     _joy.begin();
@@ -361,10 +367,9 @@ void loop() {
             LOG("Failed to connect to Joystick\n");
         }
     }
-    // _timer.tick();
 
     if (_evt.every(500)) {
-        blinkLed(NULL);
+        blinkLed();
     }
 
     _evt.tick();
