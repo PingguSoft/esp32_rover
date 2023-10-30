@@ -8,7 +8,7 @@
 * FEATURES
 *****************************************************************************************
 */
-#define MOTOR_PWM_LIMIT         150
+#define MOTOR_PWM_LIMIT         120
 
 /*
 *****************************************************************************************
@@ -20,7 +20,6 @@
 
 #define WHEEL_RADIUS_MM     65
 #define AXLE_WIDTH_MM       150
-#define AXLE_HALF_WIDTH_MM  (AXLE_WIDTH_MM / 2)
 #define TICKS_PER_CYCLE     24
 
 /*
@@ -40,7 +39,7 @@
 #define PIN_R_DRV_IN2   17
 
 #define PIN_LIDAR_RX    13
-#define PIN_LIDAR_PWM   12
+#define PIN_LIDAR_PWM   14
 
 
 /*
