@@ -5,24 +5,24 @@ void Utils::dump(String name, uint8_t* data, uint16_t cnt) {
     uint8_t  b;
     uint16_t addr = 0;
 
-    LOG(PSTR("-- %s buf size : %d -- \n"), name.c_str(), cnt);
+    printf(PSTR("-- %s buf size : %d -- \n"), name.c_str(), cnt);
     while (cnt) {
-        LOG(PSTR("%08x - "), addr);
+        printf(PSTR("%08x - "), addr);
 
         for (i = 0; (i < 16) && (i < cnt); i++) {
             b = *(data + i);
-            LOG(PSTR("%02x "), b);
+            printf(PSTR("%02x "), b);
         }
 
-        LOG(PSTR(" : "));
+        printf(PSTR(" : "));
         for (i = 0; (i < 16) && (i < cnt); i++) {
             b = *(data + i);
             if ((b > 0x1f) && (b < 0x7f))
-                LOG(PSTR("%c"), b);
+                printf(PSTR("%c"), b);
             else
-                LOG(PSTR("."));
+                printf(PSTR("."));
         }
-        LOG(PSTR("\n"));
+        printf(PSTR("\n"));
         data += i;
         addr += i;
         cnt -= i;
