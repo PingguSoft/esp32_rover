@@ -100,35 +100,4 @@ public:
     }
 };
 
-class Odometry {
-public:
-    Odometry() {
-        set(0, 0, 0);
-    }
-
-    Odometry(unsigned long ts, long l, long r) {
-        set(ts, l, r);
-    }
-
-    void set(unsigned long ts, long l, long r) {
-        millis = ts;
-        left   = l;
-        right  = r;
-    }
-
-    void reset() {
-        set(0, 0, 0);
-    }
-
-	Odometry operator-(Odometry &ref) {
-		return Odometry(millis - ref.millis, left - ref.left, right - ref.right);
-	}
-
-    unsigned long   millis;     // ms
-    long            left;       // ticks
-    long            right;      // ticks
-
-private:
-};
-
 #endif

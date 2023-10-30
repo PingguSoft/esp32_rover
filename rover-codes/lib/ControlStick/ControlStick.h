@@ -22,6 +22,74 @@
 * CLASS
 *****************************************************************************************
 */
+class ButtonTracker {
+public:
+    ButtonTracker(int shift=0) {
+        _shift   = shift;
+        _btn     = 0;
+        _oldBtn  = 0;
+    }
+
+    void begin(int btn) {
+        _btn = btn;
+        _toggled   = btn ^ _oldBtn;
+        _cur_shift = btn & _shift;
+    }
+
+    void end() {
+        _oldBtn = _btn;
+    }
+
+    void setShift(int shift) {
+        _shift = shift;
+    }
+
+    bool isPressed(int check) {
+        int shift  = check & _shift;
+
+        if (shift != _cur_shift)
+            return false;
+
+        int toggled = _toggled & (~_shift);     // clear shift mask
+        return bool((toggled & check) && (_btn & check));
+    }
+
+    bool isReleased(int check) {
+        int shift  = check & _shift;
+
+        if (shift != _cur_shift)
+            return false;
+
+        int toggled = _toggled & (~_shift);     // clear shift mask
+        return bool((toggled & check) && !(_btn & check));
+    }
+
+    bool isToggled(int check) {
+        int shift  = check & _shift;
+
+        if (shift != _cur_shift)
+            return false;
+
+        int toggled = _toggled & (~_shift);     // clear shift mask
+        return bool(toggled & check);
+    }
+
+    bool isOn(int check) {
+        return bool(_btn & check);
+    }
+
+    bool isOff(int check) {
+        return bool(!(_btn & check));
+    }
+
+private:
+    int _shift;
+    int _cur_shift;
+    int _btn;
+    int _toggled;
+    int _oldBtn;
+};
+
 class StickCallback {
 public:
     StickCallback()             {}
@@ -136,5 +204,4 @@ public:
     }
 };
 #endif
-
 #endif

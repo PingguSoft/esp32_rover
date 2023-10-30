@@ -20,7 +20,7 @@
 */
 typedef enum {
     CMD_LIDAR      = 1,
-    CMD_ODOMETRY   = 2,
+    CMD_TICKS      = 2,
     CMD_POSE       = 3,
 } cmd_t;
 

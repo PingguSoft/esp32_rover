@@ -93,24 +93,26 @@ void initPCNT(pcnt_unit_t unit, int gpio_pulse, int gpio_ctrl = PCNT_PIN_NOT_USE
 * WheelDriver
 *****************************************************************************************
 */
-WheelDriver::WheelDriver(int8_t pin_esc, int8_t pin_ctr, int8_t pin_ctr_dir) {
+WheelDriver::WheelDriver(int8_t pin_esc, int8_t pin_ctr, int8_t pin_ctr_dir, bool reverse) {
     _type    = ESC;
     _pin_esc = pin_esc;
     _pin_ctr = pin_ctr;
     _pin_ctr_dir = pin_ctr_dir;
     _unit = _num++;
+    _reverse = reverse;
 }
 
-WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_ctr, int8_t pin_ctr_dir) {
+WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_ctr, int8_t pin_ctr_dir, bool reverse) {
     _type    = DRV8833;
     _pin_in1 = pin_in1;
     _pin_in2 = pin_in2;
     _pin_ctr = pin_ctr;
     _pin_ctr_dir = pin_ctr_dir;
     _unit = _num++;
+    _reverse = reverse;
 }
 
-WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t pin_ctr, uint8_t pin_ctr_dir) {
+WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t pin_ctr, uint8_t pin_ctr_dir, bool reverse) {
     _pin_esc = TB6612FNG;
     _pin_in1 = pin_in1;
     _pin_in2 = pin_in2;
@@ -118,11 +120,11 @@ WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t 
     _pin_ctr = pin_ctr;
     _pin_ctr_dir = pin_ctr_dir;
     _unit = _num++;
+    _reverse = reverse;
 }
 
-void WheelDriver::setup(bool reverse) {
+void WheelDriver::setup() {
     _speed = 0;
-    _reverse = reverse;
     if (_type == ESC) {
         _pESC = new Servo();
         _pESC->attach(_pin_esc, 1000, 2000);
@@ -183,29 +185,29 @@ void WheelDriver::setSpeed(int speed) {
             break;
 
         case DRV8833:
-            spd = abs(speed);
-            if (speed >= 0) {
-                _pPwm[0]->write(spd);
+            spd = _reverse ? -speed : speed;
+            if (spd >= 0) {
+                _pPwm[0]->write(abs(spd));
                 _pPwm[1]->write(0);
             } else {
                 _pPwm[0]->write(0);
-                _pPwm[1]->write(spd);
+                _pPwm[1]->write(abs(spd));
             }
             break;
 
         case TB6612FNG:
-            if (speed == 0) {
+            spd = _reverse ? -speed : speed;
+            if (spd == 0) {
                 digitalWrite(_pin_in1, LOW);
                 digitalWrite(_pin_in2, LOW);
-            } else if (speed > 0) {
+            } else if (spd > 0) {
                 digitalWrite(_pin_in1, LOW);
                 digitalWrite(_pin_in2, HIGH);
             } else {
                 digitalWrite(_pin_in1, HIGH);
                 digitalWrite(_pin_in2, LOW);
             }
-            spd = abs(speed);
-            _pPwm[0]->write(spd);
+            _pPwm[0]->write(abs(spd));
             break;
     }
     _speed = speed;

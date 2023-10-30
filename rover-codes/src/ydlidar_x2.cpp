@@ -65,6 +65,8 @@ uint16_t YDLidarX2::calcCheksum(uint8_t *data, uint16_t len) {
     return crc;
 }
 
+#define rollover(a, max) ((a) > (max)) ? ((a) - (max)) : (((a) < 0) ? ((a) + (max)) : (a))
+
 int YDLidarX2::decodePacket(uint8_t *data, uint16_t len) {
     int          ret  = 0;
     pkt_header_t *pkt = (pkt_header_t*)data;
@@ -73,12 +75,7 @@ int YDLidarX2::decodePacket(uint8_t *data, uint16_t len) {
 
     uint32_t As = pkt->start >> 1;
     uint32_t Ae = pkt->end >> 1;
-    uint32_t Ad = Ae - As;
-    if (Ad < 0.0) {
-        Ad = Ad + (360 * kMult);
-    } else if (Ad > (360 * kMult)) {
-        Ad = Ad - (360 * kMult);
-    }
+    uint32_t Ad = rollover(Ae - As, 360 * kMult);
     uint16_t Ads = (pkt->samples > 1) ? (Ad / (pkt->samples - 1)) : 1;
     // LOG("type:%02X, As:%6.2f, Ae:%6.2f, Ad:%6.2f, Ads:%6.2f, samples:%d\n", pkt->type, As, Ae, Ad, Ads, pkt->samples);
 
@@ -107,11 +104,7 @@ int YDLidarX2::decodePacket(uint8_t *data, uint16_t len) {
         // Ac = (*pSample == 0) ? 0 : degrees(atan(21.8*(155.3 - Di) / (155.3 * Di)));
         Ac = (*pSample == 0) ? 0 : degrees(atan2(21.8 * (155.3 - Di), 155.3 * Di));
         Ai = (Ai / kMult) + Ac;
-        if (Ai > 360.0) {
-            Ai -= 360.0;
-        } else if (Ai < 0) {
-            Ai += 360.0;
-        }
+        Ai = rollover(Ai, 360.0);
 
         int pos = floorf((Ai + 0.3) / 0.6);
         if (0 <= pos && pos < ARRAY_SIZE(_frames[idx].scans))

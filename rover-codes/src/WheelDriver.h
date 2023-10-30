@@ -31,10 +31,10 @@ public:
         TB6612FNG
     };
 
-    WheelDriver(int8_t pin_esc, int8_t pin_ctr, int8_t pin_ctr_dir);                                    // ESC
-    WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_ctr, int8_t pin_ctr_dir);                    // DRV8833
-    WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t pin_ctr, uint8_t pin_ctr_dir);   // TB6612FNG
-    void setup(bool reverse=false);
+    WheelDriver(int8_t pin_esc, int8_t pin_ctr, int8_t pin_ctr_dir, bool reverse);                                  // ESC
+    WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_ctr, int8_t pin_ctr_dir, bool reverse);                  // DRV8833
+    WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t pin_ctr, uint8_t pin_ctr_dir, bool reverse); // TB6612FNG
+    void setup();
     void setSpeed(int speed);
     int  getSpeed()             { return _speed; }
 

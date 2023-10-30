@@ -12,6 +12,7 @@
 #include "actuator.h"
 #include "ydlidar_x2.h"
 #include "wifi_service.h"
+#include "TimeEvent.h"
 using namespace std::placeholders;
 
 /*
@@ -104,11 +105,18 @@ static const uint8_t _tblSpeed[27] = {
     175, 180, 185, 190, 195, 200, 205
 };
 
+#define BTN_SHIFT_L         _BV(ControlStick::BTN_L2)
+#define BTN_SHIFT_R         _BV(ControlStick::BTN_R2)
+#define BTN_MODE0           _BV(ControlStick::BTN_A)
+#define BTN_MODE1           _BV(ControlStick::BTN_B)
+
 class Vehicle : public MSPCallback, public StickCallback {
 private:
-    Actuator *_pActuator;
-    int       _oldBtn;
-    int       _mode;
+    Actuator       *_pActuator;
+    int             _oldBtn;
+    int             _mode;
+    ButtonTracker   _btn_trk;
+    TimeEvent       _evt;
 
 #if (DEBUG_FORWARD == FORWARD_SERIAL)
     SerialService   _service;
@@ -117,9 +125,10 @@ private:
 #endif
 
 public:
-    Vehicle(int option) {
-        _pActuator = new Actuator(new WheelDriver(PIN_L_DRV_IN1, PIN_L_DRV_IN2, PIN_L_CTR, PIN_NONE),
-                                  new WheelDriver(PIN_R_DRV_IN1, PIN_R_DRV_IN2, PIN_R_CTR, PIN_NONE));
+    Vehicle(int option) : _btn_trk(BTN_SHIFT_L | BTN_SHIFT_R), _evt(5)
+    {
+        _pActuator = new Actuator(new WheelDriver(PIN_L_DRV_IN1, PIN_L_DRV_IN2, PIN_L_CTR, PIN_NONE, false),
+                                  new WheelDriver(PIN_R_DRV_IN1, PIN_R_DRV_IN2, PIN_R_CTR, PIN_NONE, false));
         _oldBtn      = 0;
         _mode        = 0;
     }
@@ -178,6 +187,7 @@ public:
             //command(ch);
             _pActuator->calibrate(ch);
         }
+        _evt.tick();
     }
 
     int16_t limitSpeed(int speed) {
@@ -187,59 +197,22 @@ public:
         float step  = (_tblSpeed[idx + 1] - _tblSpeed[idx]) / 10;
         uint8_t out = _tblSpeed[idx] + uint8_t(rem * step);
 
-    #ifdef MOTOR_PWM_LIMIT
+#ifdef MOTOR_PWM_LIMIT
         out = map(out, 0, 255, 0, MOTOR_PWM_LIMIT);
-    #endif
+#endif
         return (speed < 0) ? -out : out;
     }
 
-    void drive(int angle, int speed) {
-        int speedL;
-        int speedR;
-
-        if (angle >= 0) {
-            float rad = radians(angle);
-            speedL = speed;
-            speedR = speed * cos(rad);
-        } else {
-            float rad = radians(-angle);
-            speedL = speed * cos(rad);
-            speedR = speed;
-        }
-        LOG("ang:%6d,  spd:%6d, %6d\n", angle, speedL, speedR);
-        _pActuator->setMotor(speedL, speedR);
-    }
-
-    #define BTN_SHIFT_L         _BV(ControlStick::BTN_L2)
-    #define BTN_SHIFT_R         _BV(ControlStick::BTN_R2)
-    #define BTN_MODE0           _BV(ControlStick::BTN_A)
-    #define BTN_MODE1           _BV(ControlStick::BTN_B)
-
-    bool isSet(int shift, int state, int checkBtn) {
-        int shiftMask  = checkBtn & (BTN_SHIFT_L | BTN_SHIFT_R);
-
-        if (shiftMask != shift)
-            return false;
-
-        state &= ~(BTN_SHIFT_L | BTN_SHIFT_R);    // clear shift mask
-        return bool(state & checkBtn);
-    }
-
     void stick(int yaw, int throttle, int pitch, int roll, int btn) {
-        int  toggled = (btn ^ _oldBtn);
-        int  shift   = btn & (BTN_SHIFT_L | BTN_SHIFT_R);
+        _btn_trk.begin(btn);
 
-        if (isSet(shift, toggled, BTN_MODE0)) {
-            if (btn & BTN_MODE0) {
-                _mode = 0;
-                LOG("mode:%d\n", _mode);
-            }
+        if (_btn_trk.isPressed(BTN_MODE0)) {
+            _mode = 0;
+            LOG("mode:%d\n", _mode);
         }
-        if (isSet(shift, toggled, BTN_MODE1)) {
-            if (btn & BTN_MODE1) {
-                _mode = 1;
-                LOG("mode:%d\n", _mode);
-            }
+        if (_btn_trk.isPressed(BTN_MODE1)) {
+            _mode = 1;
+            LOG("mode:%d\n", _mode);
         }
 
         if (_mode == 0) {
@@ -249,10 +222,10 @@ public:
         } else if (_mode == 1) {
             int angle = map(yaw,   1000, 2000,  -60,  60);
             int speed = map(pitch, 1000, 2000, -255, 255);
-            drive(angle, speed);
+            _pActuator->drive(angle, limitSpeed(speed));
         }
 
-        _oldBtn = btn;
+        _btn_trk.end();
     }
 
     //
@@ -341,7 +314,8 @@ void task_lidar(void* arg) {
 *****************************************************************************************
 */
 static ControlStick     _joy;
-static Timer<>          _timer = timer_create_default();
+// static Timer<>          _timer = timer_create_default();
+static TimeEvent        _evt(5);
 static Vehicle*         _pCar = new Vehicle(0);
 
 
@@ -350,7 +324,7 @@ static Vehicle*         _pCar = new Vehicle(0);
 * setup
 *****************************************************************************************
 */
-static bool checkTurnLight(void* param) {
+static bool blinkLed(void* param) {
     digitalWrite(PIN_LED, !digitalRead(PIN_LED));
     return true;
 }
@@ -367,7 +341,7 @@ void setup() {
     _pCar->setup();
     xTaskCreate(&task_lidar, "task_lidar", 2048, _pCar->getComm(), 2, NULL);
 
-    _timer.every(500, checkTurnLight);
+    // _timer.every(500, blinkLed);
     _joy.setStickCallback(_pCar);
     _joy.addSupportedDevices();
     _joy.begin();
@@ -387,6 +361,12 @@ void loop() {
             LOG("Failed to connect to Joystick\n");
         }
     }
-    _timer.tick();
+    // _timer.tick();
+
+    if (_evt.every(500)) {
+        blinkLed(NULL);
+    }
+
+    _evt.tick();
     _pCar->loop();
 }

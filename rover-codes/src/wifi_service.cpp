@@ -116,7 +116,7 @@ void WiFiService::task_comm(void* arg) {
     comm_q_t *q = new comm_q_t;
     while (true) {
         pSvc->process();
-        if (xQueueReceive(pSvc->_queue_comm, q, pdMS_TO_TICKS(5)) == pdTRUE) {
+        if (xQueueReceive(pSvc->_queue_comm, q, pdMS_TO_TICKS(10)) == pdTRUE) {
             if (pSvc->_isClientConnected) {
                 pSvc->_pMSP->send(q->cmd, q->pData, q->size);
                 if (q->reqBufDel)
