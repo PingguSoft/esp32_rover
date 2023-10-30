@@ -127,8 +127,8 @@ public:
         DIFFERENTIAL_DRIVE = 1
     };
 
-    Actuator(WheelDriver *engine, int8_t pin_steer);    // steering wheel
-    Actuator(WheelDriver *left, WheelDriver *right);    // differential drive
+    Actuator(WheelDriver *engine, int8_t pin_steer, uint16_t axle_width);    // steering wheel
+    Actuator(WheelDriver *left, WheelDriver *right, uint16_t axle_width);    // differential drive
 
     void    setup();
     void    setMotor(int speedL, int speedR);
@@ -145,6 +145,7 @@ private:
     int8_t          _pin_steer;
     WheelDriver     *_pDriver[2];
     Servo           *_pServo;
+    uint16_t        _axle_width;
 
     Odometry        _odometry;
     int             _angle;

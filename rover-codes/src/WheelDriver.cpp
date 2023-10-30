@@ -93,16 +93,20 @@ void initPCNT(pcnt_unit_t unit, int gpio_pulse, int gpio_ctrl = PCNT_PIN_NOT_USE
 * WheelDriver
 *****************************************************************************************
 */
-WheelDriver::WheelDriver(int8_t pin_esc, int8_t pin_ctr, int8_t pin_ctr_dir, bool reverse) {
+WheelDriver::WheelDriver(int8_t pin_esc, int8_t pin_ctr, int8_t pin_ctr_dir, bool reverse,
+                         uint16_t radius, uint16_t tpr) {
     _type    = ESC;
     _pin_esc = pin_esc;
     _pin_ctr = pin_ctr;
     _pin_ctr_dir = pin_ctr_dir;
     _unit = _num++;
     _reverse = reverse;
+    _radius  = radius;
+    _tpr     = tpr;
 }
 
-WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_ctr, int8_t pin_ctr_dir, bool reverse) {
+WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_ctr, int8_t pin_ctr_dir, bool reverse,
+                         uint16_t radius, uint16_t tpr) {
     _type    = DRV8833;
     _pin_in1 = pin_in1;
     _pin_in2 = pin_in2;
@@ -110,9 +114,12 @@ WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_ctr, int8_t 
     _pin_ctr_dir = pin_ctr_dir;
     _unit = _num++;
     _reverse = reverse;
+    _radius  = radius;
+    _tpr     = tpr;
 }
 
-WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t pin_ctr, uint8_t pin_ctr_dir, bool reverse) {
+WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t pin_ctr, uint8_t pin_ctr_dir, bool reverse,
+                         uint16_t radius, uint16_t tpr) {
     _pin_esc = TB6612FNG;
     _pin_in1 = pin_in1;
     _pin_in2 = pin_in2;
@@ -121,6 +128,8 @@ WheelDriver::WheelDriver(int8_t pin_in1, int8_t pin_in2, int8_t pin_pwm, int8_t 
     _pin_ctr_dir = pin_ctr_dir;
     _unit = _num++;
     _reverse = reverse;
+    _radius  = radius;
+    _tpr     = tpr;
 }
 
 void WheelDriver::setup() {

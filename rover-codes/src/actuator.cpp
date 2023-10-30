@@ -34,17 +34,19 @@
 * FUNCTIONS
 *****************************************************************************************
 */
-Actuator::Actuator(WheelDriver *engine, int8_t pin_steer) :
+Actuator::Actuator(WheelDriver *engine, int8_t pin_steer, uint16_t axle_width) :
     _type(STEERING),
     _pin_steer(pin_steer),
+    _axle_width(axle_width),
     _pDriver { engine, NULL }
 {
     reset(false);
 }
 
-Actuator::Actuator(WheelDriver *left, WheelDriver *right) :
+Actuator::Actuator(WheelDriver *left, WheelDriver *right, uint16_t axle_width) :
     _type(DIFFERENTIAL_DRIVE),
     _pin_steer(PIN_NONE),
+    _axle_width(axle_width),
     _pDriver { left, right }
 {
     reset(false);
@@ -98,17 +100,23 @@ void Actuator::drive(int angle, int speed) {
 
 void Actuator::getDelta(Ticks &a, Ticks &b, float *dtheta, float *ddist) {
     Ticks dlt = a - b;
-    float w_circ = 2 * M_PI * WHEEL_RADIUS_MM;
-    float dist_l = w_circ * dlt.get().left  / TICKS_PER_CYCLE;
-    float dist_r = w_circ * dlt.get().right / TICKS_PER_CYCLE;
-    *dtheta = (dist_r - dist_l) / (2 * AXLE_HALF_WIDTH_MM);
+    float len_l  = 2 * M_PI * _pDriver[IDX_LWHEEL]->getRadius();
+    float dist_l = len_l * dlt.get().left  / _pDriver[IDX_LWHEEL]->getTPR();
+
+    float len_r  = (_type == DIFFERENTIAL_DRIVE) ? (2 * M_PI * _pDriver[IDX_RWHEEL]->getRadius()) : len_l;
+    float dist_r = (_type == DIFFERENTIAL_DRIVE) ? (len_r * dlt.get().right / _pDriver[IDX_RWHEEL]->getTPR()) : dist_l;
+    *dtheta = (dist_r - dist_l) / _axle_width;
     *ddist  = (dist_r + dist_l) / 2;
 }
 
 Ticks Actuator::getTicks(Ticks *ticks) {
     Ticks t;
 
-    t.set(millis(), _pDriver[IDX_LWHEEL]->getTicks(), _pDriver[IDX_RWHEEL]->getTicks());
+    if (_type == STEERING) {
+        t.set(millis(), _pDriver[IDX_LWHEEL]->getTicks(), _pDriver[IDX_LWHEEL]->getTicks());
+    } else {
+        t.set(millis(), _pDriver[IDX_LWHEEL]->getTicks(), _pDriver[IDX_RWHEEL]->getTicks());
+    }
     if (ticks)
         *ticks = t;
     return t;
@@ -188,14 +196,17 @@ void Actuator::calibrate(int key) {
             } else {
                 _ticks.set(millis(), _pDriver[IDX_LWHEEL]->getTicks(), _pDriver[IDX_RWHEEL]->getTicks());
             }
+
             delta = _ticks - _last_ticks;
-            rot  = delta.get().left / TICKS_PER_CYCLE;
+            rot  = delta.get().left / _pDriver[IDX_LWHEEL]->getTPR();
             rot  = rot * 60000 / delta.get().millis;
             LOG("wheel_l, ctr:%8ld, rpm:%6.1f\n", _ticks.get().left,  rot);
 
-            rot  = delta.get().right / TICKS_PER_CYCLE;
-            rot  = rot * 60000 / delta.get().millis;
-            LOG("wheel_r, ctr:%8ld, rpm:%6.1f\n", _ticks.get().right, rot);
+            if (_type == DIFFERENTIAL_DRIVE) {
+                rot  = delta.get().right / _pDriver[IDX_RWHEEL]->getTPR();
+                rot  = rot * 60000 / delta.get().millis;
+                LOG("wheel_r, ctr:%8ld, rpm:%6.1f\n", _ticks.get().right, rot);
+            }
             break;
 
         case 'd':
