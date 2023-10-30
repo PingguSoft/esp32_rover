@@ -55,6 +55,7 @@ void WiFiService::write(uint8_t *pBuf, uint16_t size) {
 
 void WiFiService::setup(char *ssid, char *password, int port, MSPCallback *cb) {
     _pServer = new WiFiServer(port);
+    _pServer->setNoDelay(true);
     _pMSP = new MSP(1300);
     _pMSP->setInterface(this);
     _pMSP->setCallback(cb);
