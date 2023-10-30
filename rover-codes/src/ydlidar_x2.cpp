@@ -14,7 +14,6 @@
 *****************************************************************************************
 */
 
-
 /*
 *****************************************************************************************
 * VARIABLES
@@ -34,6 +33,12 @@ YDLidarX2::YDLidarX2() {
     _frame_in  = 0;
     _frame_out = 0;
     _frame_ctr = 0;
+
+#if MUTEX_ENABLE == 1
+    _lock = xSemaphoreCreateMutex();
+    if (_lock == NULL)
+        log_e("xSemaphoreCreateMutex failed");
+#endif
 }
 
 void YDLidarX2::setup() {
@@ -67,8 +72,8 @@ uint16_t YDLidarX2::calcCheksum(uint8_t *data, uint16_t len) {
 
 #define rollover(a, max) ((a) > (max)) ? ((a) - (max)) : (((a) < 0) ? ((a) + (max)) : (a))
 
-int YDLidarX2::decodePacket(uint8_t *data, uint16_t len) {
-    int          ret  = 0;
+bool YDLidarX2::decodePacket(uint8_t *data, uint16_t len) {
+    bool          ret = false;
     pkt_header_t *pkt = (pkt_header_t*)data;
     uint16_t     *pSample = (uint16_t*)&data[10];
     const uint16_t  kMult = 64;
@@ -79,21 +84,26 @@ int YDLidarX2::decodePacket(uint8_t *data, uint16_t len) {
     uint16_t Ads = (pkt->samples > 1) ? (Ad / (pkt->samples - 1)) : 1;
     // LOG("type:%02X, As:%6.2f, Ae:%6.2f, Ad:%6.2f, Ads:%6.2f, samples:%d\n", pkt->type, As, Ae, Ad, Ads, pkt->samples);
 
+    MUTEX_LOCK();
     uint8_t  idx = _frame_in % ARRAY_SIZE(_frames);
+    MUTEX_UNLOCK();
+
     if (pkt->type & 0x01) {
         // complete previous scans
         if (_frames[idx].ts != 0) {
-            // LOG("complete index:%2d, num:%3d\n", idx, _frames[idx].scan_num);
+            // LOG("complete index:%2d, num:%3d, %8ld\n", idx, _frames[idx].scan_num, millis());
+            MUTEX_LOCK();
             _frame_in++;
             _frame_ctr++;
-            ret = 1;
+            idx = _frame_in % ARRAY_SIZE(_frames);
+            MUTEX_UNLOCK();
+            ret = true;
         }
 
         // new scans
-        idx = _frame_in % ARRAY_SIZE(_frames);
         memset((uint8_t*)&_frames[idx], 0, sizeof(_frames[idx]));
         _frames[idx].ts  = millis();
-        // LOG("start    index:%2d\n", idx);
+        // LOG("start    index:%2d, %8ld\n", idx, _frames[idx].ts);
     }
 
     for (int i = 0; i < pkt->samples; i++, pSample++) {
@@ -115,28 +125,20 @@ int YDLidarX2::decodePacket(uint8_t *data, uint16_t len) {
     return ret;
 }
 
-bool YDLidarX2::getScans(scan_frame_t *frame) {
-    if (_frame_ctr == 0)
-        return false;
-
-    int8_t idx = _frame_out % ARRAY_SIZE(_frames);
-    memcpy(frame, &_frames[idx], sizeof(scan_frame_t));
-    _frame_out++;
-    _frame_ctr--;
-    return true;
-}
-
 YDLidarX2::scan_frame_t* YDLidarX2::getScans() {
-    if (_frame_ctr == 0)
+    MUTEX_LOCK();
+    if (_frame_ctr == 0) {
+        MUTEX_UNLOCK();
         return NULL;
+    }
 
-    int8_t idx = _frame_out % ARRAY_SIZE(_frames);
+    uint8_t idx = _frame_out % ARRAY_SIZE(_frames);
     _frame_out++;
     _frame_ctr--;
+    MUTEX_UNLOCK();
 
     return &_frames[idx];
 }
-
 
 lidar_state_t YDLidarX2::process() {
     lidar_state_t ret;
@@ -185,35 +187,17 @@ lidar_state_t YDLidarX2::process() {
 
                     // last data ?
                     if (_pkt_pos == 10 + _pkt_dlen) {
-                        if (calcCheksum(_pkt_buf, _pkt_pos) == 0) {
-                            ret = decodePacket(_pkt_buf, _pkt_pos) ? LIDAR_SCAN_COMPLETED : LIDAR_PACKET_DECODED;
-                        }
                         _pkt_state = PKT_IDLE;
+                        if (calcCheksum(_pkt_buf, _pkt_pos) == 0) {
+                            if (decodePacket(_pkt_buf, _pkt_pos)) {
+                                return LIDAR_SCAN_COMPLETED;
+                            }
+                        }
                     }
                     break;
             }
         }
     }
-
-    // if (Serial.available()) {
-    //     int ch = Serial.read();
-    //     switch (ch) {
-    //         case '.':
-    //             _pwm_duty++;
-    //             _pPwm->write(_pwm_duty);
-    //             // LOG("\nPWM:%3d\n", _pwm_duty);
-    //             break;
-
-    //         case ',':
-    //             _pwm_duty--;
-    //             _pPwm->write(_pwm_duty);
-    //             // LOG("\nPWM:%3d\n", _pwm_duty);
-    //             break;
-    //     }
-    // }
-    // if (b >= 0) {
-    //     Serial.write(b);
-    // }
 
     return ret;
 }
