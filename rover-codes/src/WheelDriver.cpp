@@ -69,7 +69,7 @@ void initPCNT(pcnt_unit_t unit, int gpio_pulse, int gpio_ctrl = PCNT_PIN_NOT_USE
         .channel = channel
     };
     pcnt_unit_config(&pcnt_config);
-    pcnt_set_filter_value(unit, 50);
+    pcnt_set_filter_value(unit, 512);
     pcnt_filter_enable(unit);
 
     /* Set threshold 0 and 1 values and enable events to watch */
@@ -146,26 +146,29 @@ void WheelDriver::setup() {
         digitalWrite(_pin_in2, LOW);
 
         if (_type == TB6612FNG) {
-            pinMode(_pin_pwm, OUTPUT);
-            digitalWrite(_pin_pwm, LOW);
+            _pwm_freq = 10000;
+            _pwm_res  = 8;
             _pPwm[0] = new ESP32PWM();
-            _pPwm[0]->attachPin(_pin_pwm, 500, 8);
+            _pPwm[0]->attachPin(_pin_pwm, _pwm_freq, _pwm_res);
+            LOG("TB6612FNG PWM Ch:%d\n", _pPwm[0]->getChannel());
         } else if (_type == DRV8833) {
+            _pwm_freq = 50000;
+            _pwm_res  = 8;
             _pPwm[0] = new ESP32PWM();
-            _pPwm[0]->attachPin(_pin_in1, 500, 8);
+            _pPwm[0]->attachPin(_pin_in1, _pwm_freq, _pwm_res);
             LOG("DRV8833 PWM Ch:%d\n", _pPwm[0]->getChannel());
 
             _pPwm[1] = new ESP32PWM();
-            _pPwm[1]->attachPin(_pin_in2, 500, 8);
+            _pPwm[1]->attachPin(_pin_in2, _pwm_freq, _pwm_res);
             LOG("DRV8833 PWM Ch:%d\n", _pPwm[1]->getChannel());
         }
     }
 
     if (_pin_ctr_dir != PIN_NONE)
-        pinMode(_pin_ctr_dir, INPUT);
+        pinMode(_pin_ctr_dir, INPUT_PULLDOWN);
 
     if (_pin_ctr != PIN_NONE) {
-        pinMode(_pin_ctr, INPUT);
+        pinMode(_pin_ctr, INPUT_PULLDOWN);
         initPCNT((pcnt_unit_t)_unit, _pin_ctr, _pin_ctr_dir, PCNT_CHANNEL_0, _k_ctr_limit, -_k_ctr_limit);
         pcnt_isr_service_install(0);
         pcnt_isr_handler_add((pcnt_unit_t)_unit, isrHandlerPCNT, (void*)this);
@@ -176,15 +179,14 @@ void WheelDriver::setup() {
 void WheelDriver::setSpeed(int speed) {
     int spd;
 
+    if (speed == _speed)
+        return;
+
     speed = constrain(speed, -255, 255);
-    if (speed >= 0) {
-        if (_speed < 0 && _pin_ctr_dir == PIN_NONE) {
-            pcnt_set_mode((pcnt_unit_t)_unit, PCNT_CHANNEL_0, PCNT_COUNT_INC, PCNT_COUNT_DIS, PCNT_MODE_KEEP, PCNT_MODE_KEEP);
-        }
-    } else {
-        if (_speed >= 0 && _pin_ctr_dir == PIN_NONE) {
-            pcnt_set_mode((pcnt_unit_t)_unit, PCNT_CHANNEL_0, PCNT_COUNT_DIS, PCNT_COUNT_DEC, PCNT_MODE_KEEP, PCNT_MODE_KEEP);
-        }
+    if (_pin_ctr_dir == PIN_NONE) {
+        int8_t mode = (speed > 0) ? PCNT_COUNT_INC : ((speed < 0) ? PCNT_COUNT_DEC : -1);
+        if (mode != -1)
+            pcnt_set_mode((pcnt_unit_t)_unit, PCNT_CHANNEL_0, (pcnt_count_mode_t)mode, PCNT_COUNT_DIS, PCNT_MODE_KEEP, PCNT_MODE_KEEP);
     }
 
     switch (_type) {
@@ -195,28 +197,53 @@ void WheelDriver::setSpeed(int speed) {
 
         case DRV8833:
             spd = _reverse ? -speed : speed;
-            if (spd >= 0) {
-                _pPwm[0]->write(abs(spd));
-                _pPwm[1]->write(0);
+			// slow decay mode : brake
+            if (spd == 0) {
+                _pPwm[0]->detachPin(_pin_in1);
+                pinMode(_pin_in1, OUTPUT);
+                digitalWrite(_pin_in1, 1);
+
+                _pPwm[1]->detachPin(_pin_in2);
+                pinMode(_pin_in2, OUTPUT);
+                digitalWrite(_pin_in2, 1);
+            } else if (spd < 0) {
+                _pPwm[0]->attachPin(_pin_in1, _pwm_freq, _pwm_res);
+                _pPwm[0]->write(255 - abs(spd));
+
+                _pPwm[1]->detachPin(_pin_in2);
+                pinMode(_pin_in2, OUTPUT);
+                digitalWrite(_pin_in2, 1);
             } else {
-                _pPwm[0]->write(0);
-                _pPwm[1]->write(abs(spd));
+                _pPwm[0]->detachPin(_pin_in1);
+                pinMode(_pin_in1, OUTPUT);
+                digitalWrite(_pin_in1, 1);
+
+                _pPwm[1]->attachPin(_pin_in2, _pwm_freq, _pwm_res);
+                _pPwm[1]->write(255 - abs(spd));
             }
             break;
 
         case TB6612FNG:
             spd = _reverse ? -speed : speed;
+            // short brake mode
             if (spd == 0) {
-                digitalWrite(_pin_in1, LOW);
-                digitalWrite(_pin_in2, LOW);
-            } else if (spd > 0) {
+                digitalWrite(_pin_in1, HIGH);
+                digitalWrite(_pin_in2, HIGH);
+
+                _pPwm[0]->detachPin(_pin_pwm);
+                pinMode(_pin_pwm, OUTPUT);
+                digitalWrite(_pin_pwm, 1);
+            } else if (spd < 0) {
                 digitalWrite(_pin_in1, LOW);
                 digitalWrite(_pin_in2, HIGH);
+                _pPwm[0]->attachPin(_pin_pwm, _pwm_freq, _pwm_res);
+                _pPwm[0]->write(abs(spd));
             } else {
                 digitalWrite(_pin_in1, HIGH);
                 digitalWrite(_pin_in2, LOW);
+                _pPwm[0]->attachPin(_pin_pwm, _pwm_freq, _pwm_res);
+                _pPwm[0]->write(abs(spd));
             }
-            _pPwm[0]->write(abs(spd));
             break;
     }
     _speed = speed;

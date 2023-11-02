@@ -67,6 +67,9 @@ private:
     int8_t   _pin_ctr;
     int8_t   _pin_ctr_dir;
     int      _speed;
+
+    double   _pwm_freq;
+    uint8_t  _pwm_res;
     ESP32PWM *_pPwm[2];
     Servo    *_pESC;
 
