@@ -18,9 +18,9 @@
 #define WIFI_SSID       "TJ's House"
 #define WIFI_PASSWORD   "cafebabe12"
 
-#define WHEEL_RADIUS_MM     65
+#define WHEEL_RADIUS_MM     (65 / 2)
 #define AXLE_WIDTH_MM       150
-#define TICKS_PER_CYCLE     24
+#define TICKS_PER_CYCLE     20
 
 /*
 *****************************************************************************************

@@ -7,7 +7,14 @@ import math
 from msp import MSP
 
 
-class LidarX2(object):
+class Robot(object):
+    CMD_LIDAR = 0x01
+    CMD_TICKS = 0x02
+    CMD_ODOMETRY = 0x03
+
+    CMD_RESET = 0x10
+    CMD_SPEED = 0x11
+
     def __init__(self, port, host=None, sceen=None):
         self._port = port
         self._thread = None
@@ -16,6 +23,10 @@ class LidarX2(object):
         self._screen = screen
         self._client = None
         self._max_scans = 600
+        self._xpos = 0
+        self._ypos = 0
+        self._theta = 0
+        self._traj = []
 
     def open(self):
         self._thread = threading.Thread(target=self.thread_tcp_reader, args=(self._sig_kill,))
@@ -61,38 +72,83 @@ class LidarX2(object):
         self._thread.join()
 
     def draw(self, screen, frame):
+        w, h = screen.get_size()
+        xpos = w // 2
+        ypos = h // 2
+        dist_div = 5
+        angle_res = 0.6
+        start = int(0 / angle_res)
+        end = int(360 / angle_res)
+        # print(frame['scans'])
+        # print('-' * 20)
+
         screen.fill((250, 250, 250))
-        xpos = 0
-        ypos = 0
-        ratio = 6
-        delta = 0.6
-        scan_num2 = int(360 / delta)
-        for x in range(scan_num2):
-            theta = delta * x
-            dist = frame['scans'][x]
-            dist /= ratio
+        for x in range(start, end, 1):
+            theta = 180 - (angle_res * x)                   # lidar installed with -90 degree and rotate CW
+            dist = frame['scans'][x]                        # but screen coordinates CCW so 180 -
+            dist /= dist_div
 
             c = (0, 0, 0)
-            r = 1
-            x = -dist * math.cos(math.radians(theta))
-            y = -dist * math.sin(math.radians(theta))
-            pygame.draw.circle(screen, c, (xpos + 400 + x, ypos + 400 + y), r)
-        pygame.draw.circle(screen, (252, 132, 3), (xpos + 400, ypos + 400), 12)
+            r = 2
+            x = dist * math.cos(math.radians(theta))
+            y = dist * math.sin(math.radians(theta))    # screen y is reversed
+            pygame.draw.circle(screen, c, (xpos + x, ypos - y), r)
+        pygame.draw.circle(screen, (252, 132, 3), (xpos, ypos), 12)
+
+        x = 20 * math.cos((math.pi / 2) - self._theta)
+        y = 20 * math.sin((math.pi / 2) - self._theta)
+        pygame.draw.line(screen, (255, 0, 0), (xpos, ypos), (xpos + x, ypos - y), 3)
+
+        for x, y in self._traj:
+            x /= dist_div
+            y /= dist_div
+            pygame.draw.circle(screen, (0, 0, 255), (xpos + x, ypos - y), 2)
+
         pygame.display.flip()
 
+    def handle_keys(self, key):
+        if key[pygame.K_r]:
+            print("reset !!")
+            self._traj = []
+            self._msp.send(Robot.CMD_RESET, None, 0)
+        elif key[pygame.K_1]:
+            spd = bytes([128])
+            self._msp.send(Robot.CMD_SPEED, spd, 1)
+            print("speed:128")
+        elif key[pygame.K_2]:
+            spd = bytes([255])
+            self._msp.send(Robot.CMD_SPEED, spd, 1)
+            print("speed:255")
+
     # MSP write interface
+
     def write(self, data):
         self._client.send(data)
 
     # callback from MSP
+    def cmd_lidar(self, data):
+        frame = {'ts': 0, 'scan_num': 0, 'scans': [0] * self._max_scans}
+        frame['ts'], frame['scan_num'] = struct.unpack('<LH', data[0:6])
+        for i in range(self._max_scans):
+            frame['scans'][i] = struct.unpack('<H', data[6+2*i:8+2*i])[0]
+        # print(f"{frame['ts']:8d} : {frame['scan_num']:3d}")
+        self.draw(self._screen, frame)
+
+    def cmd_odometry(self, data):
+        ts, self._xpos, self._ypos, self._theta = struct.unpack('<Lllf', data[0:16])
+        # print(f"{self._xpos=:8d}, {self._ypos=:8d}, {math.degrees(self._theta):5.2f}")
+        if len(self._traj) == 0 or self._traj[-1] != (self._xpos, self._ypos):
+            self._traj.append((self._xpos, self._ypos))
+
+    def cmd_ticks(self, data):
+        ts, l, r = struct.unpack('<Lll', data[0:12])
+        # print(f"{l=:8d}, {r=:8d}")
+
     def cmd_callback(self, cmd, data):
-        if cmd == 1:
-            frame = {'ts': 0, 'scan_num': 0, 'scans': [0] * self._max_scans}
-            frame['ts'], frame['scan_num'] = struct.unpack('<LH', data[0:6])
-            for i in range(self._max_scans):
-                frame['scans'][i] = struct.unpack('<H', data[6+2*i:8+2*i])[0]
-            print(f"{frame['ts']:8d} : {frame['scan_num']:3d}")
-            self.draw(self._screen, frame)
+        cmd_func_table = {Robot.CMD_LIDAR: self.cmd_lidar,
+                          Robot.CMD_ODOMETRY: self.cmd_odometry,
+                          Robot.CMD_TICKS: self.cmd_ticks}
+        return cmd_func_table[cmd](data)
 
 
 if __name__ == "__main__":
@@ -104,8 +160,8 @@ if __name__ == "__main__":
     sysfont = pygame.font.get_default_font()
     font1 = pygame.font.SysFont(sysfont, 72)
 
-    lidar = LidarX2(PORT, HOST, screen)
-    lidar.open()
+    robot = Robot(PORT, HOST, screen)
+    robot.open()
 
     running = True
     while running:
@@ -117,11 +173,12 @@ if __name__ == "__main__":
                     key_event = pygame.key.get_pressed()
                     if key_event[pygame.K_ESCAPE]:
                         running = False
+                    robot.handle_keys(key_event)
             time.sleep(0.01)
         except OSError as msg:
             print(msg)
         except KeyboardInterrupt:
             break
 
-    lidar.close()
+    robot.close()
     pygame.quit()

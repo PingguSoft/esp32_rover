@@ -23,6 +23,14 @@ using namespace std::placeholders;
 #define FORWARD_WIFI    2
 #define DEBUG_FORWARD   FORWARD_WIFI
 
+typedef enum {
+    CMD_LIDAR      = 0x01,
+    CMD_TICKS      = 0x02,
+    CMD_ODOMETRY   = 0x03,
+
+    CMD_RESET      = 0x10,
+    CMD_SPEED      = 0x11,
+} cmd_t;
 
 /*
 *****************************************************************************************
@@ -114,6 +122,7 @@ private:
     int             _mode;
     ButtonTracker   _btn_trk;
     TimeEvent       _evt;
+    uint8_t        _max_pwm;
 
 #if (DEBUG_FORWARD == FORWARD_SERIAL)
     SerialService   _service;
@@ -134,6 +143,11 @@ public:
     void setup() {
         pinMode(PIN_DRV_EN, OUTPUT);
         digitalWrite(PIN_DRV_EN, HIGH);
+#ifdef MOTOR_PWM_LIMIT
+        _max_pwm = MOTOR_PWM_LIMIT;
+#else
+        _max_pwm = 255;
+#endif
         _pActuator->setup();
         _service.setup((char*)WIFI_SSID, (char*)WIFI_PASSWORD, 8080, this);
     }
@@ -188,10 +202,16 @@ public:
 
         if (_evt.every(100)) {
             static Odometry::odometry_t odo;
+            static Ticks::ticks_t   ticks;
 
-            odo = _pActuator->updateOdometry()->get();
-            LOGI("odo: x:%5d, y:%5d, theta:%5.1f\n", odo.x, odo.y, degrees(odo.theta));
-            _service.send(CMD_ODOMETRY, (uint8_t*)&odo, sizeof(odo));
+            if (_pActuator->updateOdometry()) {
+                odo = _pActuator->getOdometry()->get();
+                // LOGI("odo: x:%5d, y:%5d, theta:%5.1f\n", odo.x, odo.y, degrees(odo.theta));
+                _service.send(CMD_ODOMETRY, (uint8_t*)&odo, sizeof(odo));
+
+                // ticks = _pActuator->getTicks().get();
+                // _service.send(CMD_TICKS, (uint8_t*)&ticks, sizeof(ticks));
+            }
         }
 
         _evt.tick();
@@ -204,9 +224,7 @@ public:
         float step  = (_tblSpeed[idx + 1] - _tblSpeed[idx]) / 10;
         uint8_t out = _tblSpeed[idx] + uint8_t(rem * step);
 
-#ifdef MOTOR_PWM_LIMIT
-        out = map(out, 0, 255, 0, MOTOR_PWM_LIMIT);
-#endif
+        out = map(out, 0, 255, 0, _max_pwm);
         return (speed < 0) ? -out : out;
     }
 
@@ -239,6 +257,17 @@ public:
     // MSPCallback implementation
     //
     virtual int16_t onCommand(uint8_t cmd, uint8_t *pData, uint16_t size, uint8_t *pRes) {
+        switch (cmd) {
+            case CMD_RESET:
+                _pActuator->reset();
+                LOGI("reset !!\n");
+                break;
+
+            case CMD_SPEED:
+                _max_pwm = *pData;
+                LOGI("max speed : %3d\n", _max_pwm);
+                break;
+        }
         return 0;
     }
 
