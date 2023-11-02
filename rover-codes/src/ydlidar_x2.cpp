@@ -78,10 +78,10 @@ bool YDLidarX2::decodePacket(uint8_t *data, uint16_t len) {
     uint16_t     *pSample = (uint16_t*)&data[10];
     const uint16_t  kMult = 64;
 
-    uint32_t As = pkt->start >> 1;
-    uint32_t Ae = pkt->end >> 1;
-    uint32_t Ad = rollover(Ae - As, 360 * kMult);
-    uint16_t Ads = (pkt->samples > 1) ? (Ad / (pkt->samples - 1)) : 1;
+    int32_t As = pkt->start >> 1;
+    int32_t Ae = pkt->end >> 1;
+    int32_t Ad = rollover(Ae - As, 360 * kMult);
+    int16_t Ads = (pkt->samples > 1) ? (Ad / (pkt->samples - 1)) : 1;
     // LOG("type:%02X, As:%6.2f, Ae:%6.2f, Ad:%6.2f, Ads:%6.2f, samples:%d\n", pkt->type, As, Ae, Ad, Ads, pkt->samples);
 
     MUTEX_LOCK();
