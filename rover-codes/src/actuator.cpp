@@ -98,15 +98,17 @@ void Actuator::drive(int angle, int speed) {
     }
 }
 
-void Actuator::getDelta(Ticks &a, Ticks &b, float *dtheta, float *ddist) {
+bool Actuator::getDelta(Ticks &a, Ticks &b, float *dtheta, float *ddist) {
     Ticks dlt = a - b;
     float len_l  = 2 * M_PI * _pDriver[IDX_LWHEEL]->getRadius();
     float dist_l = len_l * dlt.get().left  / _pDriver[IDX_LWHEEL]->getTPR();
 
     float len_r  = (_type == DIFFERENTIAL_DRIVE) ? (2 * M_PI * _pDriver[IDX_RWHEEL]->getRadius()) : len_l;
     float dist_r = (_type == DIFFERENTIAL_DRIVE) ? (len_r * dlt.get().right / _pDriver[IDX_RWHEEL]->getTPR()) : dist_l;
-    *dtheta = (dist_r - dist_l) / _axle_width;
+    *dtheta = (dist_l - dist_r) / _axle_width;  // CW
     *ddist  = (dist_r + dist_l) / 2;
+
+    return (dlt.get().left != 0 || dlt.get().right != 0);
 }
 
 Ticks Actuator::getTicks(Ticks *ticks) {
@@ -122,7 +124,9 @@ Ticks Actuator::getTicks(Ticks *ticks) {
     return t;
 }
 
-Odometry* Actuator::updateOdometry() {
+bool Actuator::updateOdometry() {
+    bool is_first = (_ticks.get().millis == 0);
+
     if (_type == STEERING) {
         _ticks.set(millis(), _pDriver[IDX_LWHEEL]->getTicks(), _pDriver[IDX_LWHEEL]->getTicks());
     } else {
@@ -130,20 +134,25 @@ Odometry* Actuator::updateOdometry() {
     }
 
     float dtheta, ddist;
-    getDelta(_ticks, _last_ticks, &dtheta, &ddist);
+    bool  is_moved = getDelta(_ticks, _last_ticks, &dtheta, &ddist);
     if (_type == STEERING) {
         dtheta = _angle - _last_angle;
         _last_angle = _angle;
+        is_moved = is_moved || (dtheta != 0);
+    }
+
+    if (is_moved) {
+        float dx  = ddist * sin(_odometry.get().theta);
+        float dy  = ddist * cos(_odometry.get().theta);
+        _odometry.acc(millis(), dx, dy, dtheta);
+
+        // LOG("%8ld tick:(%8ld,%8ld), o_ticks:(%8ld,%8ld), dtheta:%6.2f, dist:%6.2f, delta_xy:%6.2f, %6.2f, odometry:%8ld, %8ld, %6.2f\n",
+        //     _odometry.get().millis, _ticks.get().left, _ticks.get().right, _last_ticks.get().left, _last_ticks.get().right,
+        //     dtheta, ddist, dx, dy, _odometry.get().x, _odometry.get().y, _odometry.get().theta);
     }
     _last_ticks = _ticks;
 
-    float dx  = ddist * cos(_odometry.get().theta);
-    float dy  = ddist * sin(_odometry.get().theta);
-    _odometry.acc(millis(), dx, dy, dtheta);
-
-    // LOG("%8ld tick:%8ld,%8ld, dtheta:%6.2f, dist:%6.2f, delta_xy:%6.2f, %6.2f, odometry:%8ld, %8ld, %6.2f\n",
-    //     _odometry.millis, _ticks.get().left, _ticks.get().left, dtheta, ddist, dx, dy, _odometry.x, _odometry.y, _odometry.theta);
-    return &_odometry;
+    return is_moved || is_first;
 }
 
 void Actuator::reset(bool driver) {

@@ -92,6 +92,7 @@ public:
     void acc(unsigned long ts, long dx, long dy, float dtheta) {
         float pi2 = (2 * M_PI);
 
+        _odo.millis = ts;
         _odo.x += dx;
         _odo.y += dy;
         _odo.theta += dtheta;
@@ -133,13 +134,14 @@ public:
     void    setup();
     void    setMotor(int speedL, int speedR);
     void    drive(int angle, int speed);
-    Ticks       getTicks(Ticks *ticks=NULL);
-    Odometry*   updateOdometry();
     void    reset(bool driver=true);
     void    calibrate(int key);
+    Ticks       getTicks(Ticks *ticks=NULL);
+    bool        updateOdometry();
+    Odometry*   getOdometry()                   { return &_odometry; }
 
 private:
-    void    getDelta(Ticks &a, Ticks &b, float *dtheta, float *ddist);
+    bool    getDelta(Ticks &a, Ticks &b, float *dtheta, float *ddist);
 
     uint8_t         _type;
     int8_t          _pin_steer;
