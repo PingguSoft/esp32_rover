@@ -100,7 +100,7 @@ void WiFiService::process() {
     }
 }
 
-void WiFiService::send(cmd_t cmd, uint8_t *buf, uint16_t size, bool reqBufDel, bool reqSeqHeader) {
+void WiFiService::send(uint8_t cmd, uint8_t *buf, uint16_t size, bool reqBufDel, bool reqSeqHeader) {
     if (_isClientConnected) {
         comm_q_t q = { cmd, buf, size, reqBufDel, reqSeqHeader };
         xQueueSend(_queue_comm, &q, portMAX_DELAY);

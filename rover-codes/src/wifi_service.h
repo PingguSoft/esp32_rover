@@ -18,14 +18,8 @@
 * MACROS & STRUCTURES
 *****************************************************************************************
 */
-typedef enum {
-    CMD_LIDAR      = 1,
-    CMD_TICKS      = 2,
-    CMD_ODOMETRY   = 3,
-} cmd_t;
-
 typedef struct {
-    cmd_t       cmd;
+    uint8_t     cmd;
     uint8_t     *pData;
     uint16_t    size;
     bool        reqBufDel;
@@ -35,7 +29,7 @@ typedef struct {
 class CommService {
     public:
         virtual void setup(char *ssid, char *password, int port, MSPCallback *cb = NULL);
-        virtual void send(cmd_t cmd, uint8_t *buf, uint16_t size, bool reqDataDel=false, bool reqSeqHeader=false);
+        virtual void send(uint8_t cmd, uint8_t *buf, uint16_t size, bool reqDataDel=false, bool reqSeqHeader=false);
 };
 
 /*
@@ -50,7 +44,7 @@ public:
     bool isConnected();
     QueueHandle_t getQueue()   { return _queue_comm; }
 
-    void send(cmd_t cmd, uint8_t *buf, uint16_t size, bool reqDataDel=false, bool reqSeqHeader=false);
+    void send(uint8_t cmd, uint8_t *buf, uint16_t size, bool reqDataDel=false, bool reqSeqHeader=false);
 
     // MSPInterface implementation
     virtual void write(uint8_t *pBuf, uint16_t size);
