@@ -35,7 +35,7 @@ void MSP::send(uint8_t cmd, uint8_t *data, uint16_t size, reply_t reply, bool is
         szPacket = isSeqHeader ? (m_wPacketSize - 2) : m_wPacketSize;
         szHeader = isSeqHeader ? 8 : 6;
 
-        while (size > 0) {
+        while (size >= 0) {
             uint16_t frag   = (size > szPacket) ? szPacket : size;
             uint16_t sz_ext = isSeqHeader ? frag + 2 : frag;
 
@@ -45,7 +45,9 @@ void MSP::send(uint8_t cmd, uint8_t *data, uint16_t size, reply_t reply, bool is
             header[3] = (sz_ext >> 8) & 0xff;
             header[4] = sz_ext & 0xff;
             header[5] = cmd;
-            size -= frag;
+
+            if (frag > 0)
+                size -= frag;
 
             // 2bytes additional header = should be considered as data
             if (isSeqHeader) {
@@ -54,8 +56,13 @@ void MSP::send(uint8_t cmd, uint8_t *data, uint16_t size, reply_t reply, bool is
                 m_ucSubSeq++;
             }
             m_pInterface->write(header, szHeader);
-            m_pInterface->write(buf, frag);
-            buf  += frag;
+
+            if (frag > 0) {
+                m_pInterface->write(buf, frag);
+                buf  += frag;
+            }
+            if (size == 0)
+                break;
         }
 
         if (isSeqHeader) {

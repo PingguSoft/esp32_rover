@@ -25,17 +25,16 @@ class MSP:
         self._cb = callback
 
     def send(self, cmd, data, size, reply=REPLY_NO, isSeqHeader=False):
-        reply_tbl = ['<', '>', '!']
+        reply_tbl = ['>', '<', '!']
         szPacket = 0
         szHeader = 0
         pos = 0
 
-        szPacket = (self._packet_size -
-                    2) if isSeqHeader else self._packet_size
+        szPacket = (self._packet_size - 2) if isSeqHeader else self._packet_size
         szHeader = 8 if isSeqHeader else 6
         header = []
 
-        while size > 0:
+        while size >= 0:
             frag = szPacket if size > szPacket else size
             sz_ext = (frag + 2) if isSeqHeader else frag
             header.append(ord('$'))
@@ -44,19 +43,24 @@ class MSP:
             header.append((sz_ext >> 8) & 0xff)
             header.append(sz_ext & 0xff)
             header.append(cmd)
-            size -= frag
+
+            if frag > 0:
+                size -= frag
 
             if isSeqHeader:
                 header.append(self._seq)
                 ss = (0x80 | self._sub_seq) if size == 0 else self._sub_seq
                 header.append(ss)
                 self._sub_seq += 1
+            self._write(bytes(header))
 
-            header.flip()
-            self._write(header)
-            buf = data[pos:pos + frag]
-            self._write(buf)
-            pos += frag
+            if frag > 0:
+                buf = data[pos:pos + frag]
+                self._write(buf)
+                pos += frag
+
+            if size == 0:
+                break
 
         if isSeqHeader:
             self._seq += 1
