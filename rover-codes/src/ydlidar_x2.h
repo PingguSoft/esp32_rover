@@ -38,6 +38,7 @@ class YDLidarX2 {
 public:
     typedef struct {
         unsigned long   ts;
+        int8_t          aux;
         uint16_t        scan_num;
         uint16_t        scans[600];
     } __attribute__((packed)) scan_frame_t;

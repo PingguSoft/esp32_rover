@@ -74,6 +74,10 @@ public:
         return bool(toggled & check);
     }
 
+    bool isToggled() {
+        return bool(_toggled);
+    }
+
     bool isOn(int check) {
         return bool(_btn & check);
     }

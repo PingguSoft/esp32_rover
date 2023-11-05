@@ -27,6 +27,7 @@ typedef enum {
     CMD_LIDAR      = 0x01,
     CMD_TICKS      = 0x02,
     CMD_ODOMETRY   = 0x03,
+    CMD_BUTTON     = 0x04,
 
     CMD_RESET      = 0x10,
     CMD_SPEED      = 0x11,
@@ -115,25 +116,27 @@ static const uint8_t _tblSpeed[27] = {
 #define BTN_SHIFT_R         _BV(ControlStick::BTN_R2)
 #define BTN_MODE0           _BV(ControlStick::BTN_A)
 #define BTN_MODE1           _BV(ControlStick::BTN_B)
+#define BTN_RECORD          _BV(ControlStick::BTN_START)
 
 class Vehicle : public MSPCallback, public StickCallback {
 private:
-    Actuator       *_pActuator;
-    int             _mode;
-    ButtonTracker   _btn_trk;
-    TimeEvent       _evt;
-    uint8_t        _max_pwm;
-
 #if (DEBUG_FORWARD == FORWARD_SERIAL)
     SerialService   _service;
 #elif (DEBUG_FORWARD == FORWARD_WIFI)
     WiFiService     _service;
 #endif
+    Actuator       *_pActuator;
+    uint8_t         _mode;
+    ButtonTracker   _btn_trk;
+    TimeEvent       _evt;
+    uint8_t         _max_pwm;
+    int8_t          _angle;
 
 public:
     Vehicle(int option) : _btn_trk(BTN_SHIFT_L | BTN_SHIFT_R), _evt(5)
     {
         _mode      = 0;
+        _angle     = 0;
         _pActuator = new Actuator(
                         new WheelDriver(PIN_L_DRV_IN1, PIN_L_DRV_IN2, PIN_L_CTR, PIN_NONE, false, WHEEL_RADIUS_MM, TICKS_PER_CYCLE),
                         new WheelDriver(PIN_R_DRV_IN1, PIN_R_DRV_IN2, PIN_R_CTR, PIN_NONE, false, WHEEL_RADIUS_MM, TICKS_PER_CYCLE),
@@ -158,6 +161,10 @@ public:
 #else
         return &_service;
 #endif
+    }
+
+    int8_t *getAnglePtr() {
+        return &_angle;
     }
 
     void command(int m) {
@@ -239,15 +246,20 @@ public:
             _mode = 1;
             LOG("mode:%d\n", _mode);
         }
+        if (_btn_trk.isToggled()) {
+            int *pData = new int[1];
+            pData[0] = btn;
+            getComm()->send(CMD_BUTTON, (uint8_t*)pData, sizeof(int), true);
+        }
 
         if (_mode == 0) {
             int speedL = map(throttle, 1000, 2000, -255, 255);
             int speedR = map(pitch,    1000, 2000, -255, 255);
             _pActuator->setMotor(limitSpeed(speedL), limitSpeed(speedR));
         } else if (_mode == 1) {
-            int angle = map(roll,     1000, 2000,  -60,  60);
+            _angle = map(roll,     1000, 2000,  -60,  60);
             int speed = map(throttle, 1000, 2000, -255, 255);
-            _pActuator->drive(angle, limitSpeed(speed));
+            _pActuator->drive(_angle, limitSpeed(speed));
         }
 
         _btn_trk.end();
@@ -318,10 +330,16 @@ public:
 * task_lidar
 *****************************************************************************************
 */
+typedef struct {
+    CommService *comm;
+    int8_t      *aux;
+} task_param_t;
+
 void task_lidar(void* arg) {
     YDLidarX2   *pLidar = new YDLidarX2();
     YDLidarX2::scan_frame_t *pFrame;
-    CommService *pSvc = (CommService*)arg;
+    task_param_t *param = (task_param_t*)arg;
+    CommService *pSvc = param->comm;
 
     LOG("task lidar started\n");
     pLidar->setup();
@@ -336,6 +354,7 @@ void task_lidar(void* arg) {
             case LIDAR_SCAN_COMPLETED:
                 pFrame = pLidar->getScans();
                 if (pSvc && pFrame) {
+                    pFrame->aux = *(param->aux);
                     // LOG("> scans:%3d\n", pFrame->scan_num);
                     pSvc->send(CMD_LIDAR, (uint8_t*)pFrame, sizeof(YDLidarX2::scan_frame_t));
                 }
@@ -365,6 +384,8 @@ void blinkLed() {
     digitalWrite(PIN_LED, !digitalRead(PIN_LED));
 }
 
+static task_param_t _param;
+
 void setup() {
     // setCpuFrequencyMhz(80);
     Serial.begin(230400);
@@ -375,7 +396,8 @@ void setup() {
     pinMode(PIN_LED, OUTPUT);
 
     _pCar->setup();
-    xTaskCreate(&task_lidar, "task_lidar", 2048, _pCar->getComm(), 2, NULL);
+    _param = {_pCar->getComm(), _pCar->getAnglePtr()};
+    xTaskCreate(&task_lidar, "task_lidar", 2048, &_param, 2, NULL);
 
     _joy.setStickCallback(_pCar);
     _joy.addSupportedDevices();
