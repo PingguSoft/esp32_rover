@@ -14,7 +14,6 @@ if __name__ == "__main__":
     gap = 5
 
     pose = [0, 0, 0]
-
     traj = []
 
     for i in range(start, end, gap):
@@ -30,8 +29,10 @@ if __name__ == "__main__":
             plt.xlim([-80, 80])
             plt.ylim([-80, 80])
 
+            print(pose)
             plt.plot(pose[0], pose[1], 'o', color='blue', markersize=3)
             traj.append(pose)
+            print(f"{traj=}")
 
             traj_array = np.array(traj)
             plt.plot(traj_array[:, 0], traj_array[:, 1], color='black')
@@ -40,6 +41,8 @@ if __name__ == "__main__":
 
             pose_T = v2t(pose)
             pose = t2v(np.copy(np.dot(T, pose_T)))
+            print(pose)
+            print("-")
 
             frame = np.ones((3, scan_current_global.shape[0]))
             frame[:2, :] = scan_current_global.T
