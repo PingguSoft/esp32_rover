@@ -51,9 +51,9 @@ class Robot(object):
         #
         self._fig = None
         self._axes = None
-        self._canvas = {'lidar': {'sig': threading.Event(), 'func': self.show_lidar_image},
-                        'pose': {'sig': threading.Event(), 'func': self.show_lidar_pose},
-                        'slam': {'sig': threading.Event(), 'func': None}}
+        self._canvas = {'lidar': {'sig': threading.Event(), 'ax': None, 'func': self.show_lidar_image},
+                        'pose': {'sig': threading.Event(), 'ax': None, 'func': self.show_lidar_pose},
+                        'slam': {'sig': threading.Event(), 'ax': None, 'func': None}}
 
     def open(self, host, port):
         self._port = port
@@ -126,9 +126,9 @@ class Robot(object):
                     self._frame = {'ts': 0, 'aux': 0, 'scan_num': 0, 'scans': None}
                     self._frame['aux'] = data[0]
                     self._frame['scans'] = data[1:]
-                    self.calc_lidar_odometry(self._frame)
                     self._canvas['lidar']['sig'].set()
-                    time.sleep(0.05)
+                    self.calc_lidar_odometry(self._frame)
+                    time.sleep(0.2)
                 else:
                     self._rec_file.seek(0)
                     print("-" * 100)
@@ -238,16 +238,22 @@ class Robot(object):
         start = int(0 / angle_res)
         end = int(360 / angle_res)
 
-        # draw lidar image
-        for x in range(start, end, 1):
-            theta = 180 - (angle_res * x)                       # lidar installed with -90 degree and rotate CW
-            dist = self._frame['scans'][x] / self._scale_div    # but screen coordinates CCW so 180 -
+        roi_start = int(30 / angle_res)
+        roi_end = int(150 / angle_res)
 
-            c = (0, 0, 0)
-            r = 2
+        # draw lidar image
+        xlist = []
+        ylist = []
+        for i in range(start, end, 1):
+            theta = 180 - (angle_res * i)                       # lidar installed with -90 degree and rotate CW
+            dist = self._frame['scans'][i] / self._scale_div    # but screen coordinates CCW so 180 -
             x = dist * math.cos(math.radians(theta))
             y = dist * math.sin(math.radians(theta))    # screen y is reversed
-            ax.plot(x, y, 'o', markersize=1, color='black')
+            xlist.append(x)
+            ylist.append(y)
+        ax.plot(xlist, ylist, 'o', markersize=1, color='black')
+        ax.plot(xlist[roi_start:roi_end], ylist[roi_start:roi_end], 'o', markersize=1, color='red')
+
 
         # draw pose direction
         if self._rec_file is not None:
@@ -257,13 +263,16 @@ class Robot(object):
         y = int(50 * math.sin((math.pi / 2) - self._theta))
         line = lines.Line2D([0, x], [0, y], lw=2, color='cyan', axes=ax)
         ax.add_line(line)
-        print(x, y)
 
         # draw trajectory
+        xlist = []
+        ylist = []
         for x, y in self._traj:
             x /= self._scale_div
             y /= self._scale_div
-            ax.plot(x, y, 'o', markersize=1, color='lime')
+            xlist.append(x)
+            ylist.append(y)
+        ax.plot(xlist, ylist, 'o', markersize=1, color='lime')
 
         # draw steering angle
         ax.text(-40, ax.get_ylim()[0], f"{self._frame['aux']:3d}", fontsize=20.0, color='red')
@@ -276,11 +285,12 @@ class Robot(object):
             pose = self._lidar_traj[-1]
             ax.plot(pose[0], pose[1], 'o', color='blue', markersize=3)
             traj_array = np.array(self._lidar_traj)
-            ax.plot(traj_array[:, 0], traj_array[:, 1], color='black')
+            ax.plot(traj_array[:, 0], traj_array[:, 1], color='red')
 
         if self._result is not None:
-            ax.plot(self._result[:, 0], self._result[:, 1], 'o', markersize=1, color='red')
+            ax.plot(self._result[:, 0], self._result[:, 1], 'o', markersize=1, color='black')
 
+    #
     def set_axes_default(self, ax, title):
         ax.clear()
         ax.set_title(title)
@@ -291,20 +301,23 @@ class Robot(object):
         lim = 4000 / self._scale_div
         ax.set_xlim([-lim, lim])
         ax.set_ylim([-lim, lim])
-        ax.text(ax.get_ylim()[0], ax.get_ylim()[1],
-                f"scale=1/{self._scale_div} mm", fontsize=10.0, color='red')
+        ax.text(ax.get_ylim()[0], ax.get_ylim()[1], f"scale=1/{self._scale_div} mm", fontsize=10.0, color='red')
 
+    #
     def show_outputs(self):
         if self._fig is None:
             self._fig, self._axes = plt.subplots(1, len(self._canvas), figsize=(6 * len(self._canvas), 6))
             self._fig.set_tight_layout(True)
-            print("figure created")
+            for i, c in enumerate(self._canvas):
+                self._canvas[c]['ax'] = self._axes[i]
 
-        is_dirty = False
+        is_dirty = True
         for i, c in enumerate(self._canvas):
             if self._canvas[c]['sig'].is_set() and self._canvas[c]['func'] != None:
-                self.set_axes_default(self._axes[i], c)
+                s = time.monotonic()
+                self.set_axes_default(self._canvas[c]['ax'], c)
                 self._canvas[c]['func'](self._axes[i])
+                print(f"draw elapsed {c:10s} {time.monotonic() - s:5.3f}")
                 self._canvas[c]['sig'].clear()
                 is_dirty = True
 
@@ -315,7 +328,9 @@ class Robot(object):
             img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             cv2.imshow('images', img)
 
-
+#
+# main
+#
 if __name__ == "__main__":
     robot = Robot()
     # robot.open(host="192.168.0.155", port=8080)
@@ -325,7 +340,7 @@ if __name__ == "__main__":
     while running:
         try:
             robot.show_outputs()
-            key = cv2.waitKey(5)
+            key = cv2.waitKey(1)
             if key == 27:
                 running = False
                 break
