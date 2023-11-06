@@ -1,6 +1,8 @@
 import socket
 import time
 import threading
+import traceback
+from queue import Queue, Empty
 import struct
 import math
 from msp import MSP
@@ -28,8 +30,10 @@ class Robot(object):
     def __init__(self):
         self._thread = None
         self._sig_kill = threading.Event()
+        self._queue = Queue(20)
         self._is_record = False
-        self._rec_file = None
+        self._log_file = None
+        self._log_msg = None
         #
         self._port = 0
         self._host = None
@@ -62,7 +66,7 @@ class Robot(object):
         self._thread.start()
 
     def open_file(self, file):
-        self._rec_file = open(file, "rt")
+        self._log_file = file
         self._thread = threading.Thread(target=self.thread_replay, args=(self._sig_kill,))
         self._thread.start()
 
@@ -77,8 +81,8 @@ class Robot(object):
         while True:
             try:
                 self._client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            except OSError as msg:
-                print(msg)
+            except OSError:
+                print(traceback.format_exc())
 
             self._client.settimeout(3)
             if self._client:
@@ -87,8 +91,8 @@ class Robot(object):
                     self._client.connect((self._host, self._port))
                     print("connected...")
                     break
-                except OSError as msg:
-                    print(msg)
+                except OSError:
+                    print(traceback.format_exc())
                 except KeyboardInterrupt:
                     break
 
@@ -97,8 +101,8 @@ class Robot(object):
             try:
                 buf = self._client.recv(30)
                 self._msp.processRx(buf)
-            except OSError as msg:
-                print(msg)
+            except OSError:
+                print(traceback.format_exc())
 
         if self._client:
             self._client.close()
@@ -111,37 +115,70 @@ class Robot(object):
         line = line.replace("[", "")
         line = line.replace("]", "")
         list = line.split(",")
-        for i, l in enumerate(list):
-            list[i] = int(l)
-        return list
+        d_list = []
+        for l in list:
+            d_list.append(int(l))
+        return d_list
 
     def thread_replay(self, sig_kill):
         print('thread_replay started')
-        # reading loop
-        while self._rec_file and not sig_kill.is_set():
-            try:
-                line = self._rec_file.readline()
-                if line:
-                    data = self.format_line(line)
-                    self._frame = {'ts': 0, 'aux': 0, 'scan_num': 0, 'scans': None}
-                    self._frame['aux'] = data[0]
-                    self._frame['scans'] = data[1:]
-                    self._canvas['lidar']['sig'].set()
-                    self.calc_lidar_odometry(self._frame)
-                    time.sleep(0.2)
-                else:
-                    self._rec_file.seek(0)
-                    print("-" * 100)
-                    time.sleep(5)
-            except Exception as e:
-                print(e)
-                break
 
-        if self._rec_file:
-            self._rec_file.close()
+        with open(self._log_file, "rt") as f:
+            lines = f.readlines()
+            x = []
+            y = []
+            for line in lines:
+                data = self.format_line(line)
+                x.append(data[1:])
+                y.append(data[0])
+
+        # reading loop
+        idx = 0
+        is_block = True
+        while not sig_kill.is_set():
+            if idx < len(y):
+                self._log_msg = f"{idx:5d} / {len(y):5d}"
+                self._frame = {'ts': 0, 'aux': 0, 'scan_num': 0, 'scans': None}
+                self._frame['aux'] = y[idx]
+                self._frame['scans'] = x[idx]
+                self._canvas['lidar']['sig'].set()
+
+                self.calc_lidar_odometry(self._frame)
+
+                try:
+                    key = self._queue.get(block=is_block)
+                    if key == 0x250000 and idx > 0:     # left arrow
+                        idx -= 1
+                    elif key == 0x270000:               # right arrow
+                        idx += 1
+                    elif key == ord(' '):
+                        is_block = not is_block
+                    elif key == ord('d'):
+                        print(f"delete {idx:6d} {y[idx]:3d}")
+                        x.pop(idx)
+                        y.pop(idx)
+                        idx += 1
+                    elif key == ord('s'):
+                        print(f"save logs file")
+                        with open(self._log_file, "wt") as f:
+                            for i in range(len(y)):
+                                f.write(f"{y[i]:3d}, [")
+                                f.write(", ".join(str(e) for e in x[i]))
+                                f.write("]\n")
+                except Empty:
+                    pass
+
+                if not is_block:
+                    idx += 1
+            else:
+                print("-" * 100)
+                time.sleep(5)
+                idx = 0
+
         print('thread_replay terminated')
 
     def close(self):
+        self._queue.put(0)
         self._sig_kill.set()
         self._thread.join()
 
@@ -174,6 +211,8 @@ class Robot(object):
             spd = bytes([255])
             self._msp.send(Robot.CMD_SPEED, spd, 1)
             print("speed:255")
+        elif key != -1:
+            self._queue.put(key)
 
     #
     # MSP write interface
@@ -192,8 +231,8 @@ class Robot(object):
         # print(f"{self._frame['ts']:8d} : {self._frame['aux']:3d}, {self._frame['scan_num']:3d}")
 
         self.calc_lidar_odometry(self._frame)
-        if self._is_record and self._rec_file:
-            self._rec_file.write(f"{self._frame['aux']:3d}, {self._frame['scans']}\n")
+        if self._is_record and self._log_file:
+            self._log_file.write(f"{self._frame['aux']:3d}, {self._frame['scans']}\n")
             # print(f"{self._frame['aux']:3d}, {self._frame['scans']}")
         self._canvas['lidar']['sig'].set()
 
@@ -213,15 +252,15 @@ class Robot(object):
         if (btn & Robot.BTN_START) == Robot.BTN_START:
             self._is_record = not self._is_record
 
-            if self._is_record and self._rec_file is None:
+            if self._is_record and self._log_file is None:
                 now = datetime.now()
                 filename = now.strftime("%m%d_%H%M%S")
-                self._rec_file = open(filename + ".log", "wt")
+                self._log_file = open(filename + ".log", "wt")
                 print(f"log file  : {filename}")
-            elif not self._is_record and self._rec_file:
+            elif not self._is_record and self._log_file:
                 print(f"log saved")
-                self._rec_file.close()
-                self._rec_file = None
+                self._log_file.close()
+                self._log_file = None
 
     def cmd_callback(self, cmd, data):
         cmd_func_table = {Robot.CMD_LIDAR: self.cmd_lidar,
@@ -254,9 +293,8 @@ class Robot(object):
         ax.plot(xlist, ylist, 'o', markersize=1, color='black')
         ax.plot(xlist[roi_start:roi_end], ylist[roi_start:roi_end], 'o', markersize=1, color='red')
 
-
         # draw pose direction
-        if self._rec_file is not None:
+        if self._log_file is not None:
             self._theta = math.radians(self._frame['aux'])
 
         x = int(50 * math.cos((math.pi / 2) - self._theta))
@@ -273,7 +311,7 @@ class Robot(object):
             xlist.append(x)
             ylist.append(y)
         ax.plot(xlist, ylist, 'o', markersize=1, color='lime')
-
+        ax.text(ax.get_xlim()[1] - 150, ax.get_ylim()[0], self._log_msg, fontsize=10.0, color='red')
         # draw steering angle
         ax.text(-40, ax.get_ylim()[0], f"{self._frame['aux']:3d}", fontsize=20.0, color='red')
 
@@ -301,7 +339,7 @@ class Robot(object):
         lim = 4000 / self._scale_div
         ax.set_xlim([-lim, lim])
         ax.set_ylim([-lim, lim])
-        ax.text(ax.get_ylim()[0], ax.get_ylim()[1], f"scale=1/{self._scale_div} mm", fontsize=10.0, color='red')
+        ax.text(ax.get_xlim()[0], ax.get_ylim()[1], f"scale=1/{self._scale_div} mm", fontsize=10.0, color='red')
 
     #
     def show_outputs(self):
@@ -314,10 +352,10 @@ class Robot(object):
         is_dirty = True
         for i, c in enumerate(self._canvas):
             if self._canvas[c]['sig'].is_set() and self._canvas[c]['func'] != None:
-                s = time.monotonic()
+                # s = time.monotonic()
                 self.set_axes_default(self._canvas[c]['ax'], c)
                 self._canvas[c]['func'](self._axes[i])
-                print(f"draw elapsed {c:10s} {time.monotonic() - s:5.3f}")
+                # print(f"draw elapsed {c:10s} {time.monotonic() - s:5.3f}")
                 self._canvas[c]['sig'].clear()
                 is_dirty = True
 
@@ -327,6 +365,11 @@ class Robot(object):
             img = img.reshape(self._fig.canvas.get_width_height()[::-1] + (3,))
             img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             cv2.imshow('images', img)
+
+        key = cv2.waitKeyEx(10)
+        self.handle_keys(key)
+        return key
+
 
 #
 # main
@@ -339,17 +382,15 @@ if __name__ == "__main__":
     running = True
     while running:
         try:
-            robot.show_outputs()
-            key = cv2.waitKey(1)
+            key = robot.show_outputs()
             if key == 27:
                 running = False
                 break
-            robot.handle_keys(key)
         except KeyboardInterrupt:
             running = False
             break
         except Exception as e:
-            print(e)
+            print(traceback.format_exc())
             running = False
             break
 
