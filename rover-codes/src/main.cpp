@@ -83,7 +83,7 @@ public:
         SerialService *pSvc = (SerialService*)arg;
         comm_q_t *q = new comm_q_t;
 
-        LOG("task comm started\n");
+        LOGI("task comm started\n");
         while (true) {
             if (xQueueReceive(pSvc->_queue_comm, q, portMAX_DELAY) == pdTRUE) {
                 pSvc->_pMSP->send(q->cmd, q->pData, q->size);
@@ -106,10 +106,15 @@ private:
 * CLASS Vehicle
 *****************************************************************************************
 */
-static const uint8_t _tblSpeed[27] = {
-        0,  50,  60,  70,  80,  90, 100, 110, 115, 120,
-    125, 130, 135, 140, 145, 150, 155, 160, 165, 170,
-    175, 180, 185, 190, 195, 200, 205
+static const uint8_t _tblExpSpeed[] = {
+    0, 45, 90, 117, 135, 150, 162, 172, 181, 188,
+    195, 201, 207, 212, 217, 222, 226, 230, 233, 237,
+    240, 243, 247, 249, 250, 250, 250
+};
+
+static const uint8_t _tblExpAngle[] = {
+    0, 0, 0, 0, 0, 1, 1, 2, 3, 5, 6, 8, 11, 14,
+    17, 21, 26, 31, 37, 43, 51, 59, 67, 77, 88, 90
 };
 
 #define BTN_SHIFT_L         _BV(ControlStick::BTN_L2)
@@ -224,15 +229,31 @@ public:
         _evt.tick();
     }
 
-    int16_t limitSpeed(int speed) {
+    // input speed : -255 ~ 255 => -255 ~ 255
+    int16_t getExpSpeed(int speed) {
+        speed = constrain(speed, -255, 255);
+
         uint8_t  spd = abs(speed);
         uint8_t  idx = spd / 10;
         uint8_t  rem = spd % 10;
-        float step  = (_tblSpeed[idx + 1] - _tblSpeed[idx]) / 10;
-        uint8_t out = _tblSpeed[idx] + uint8_t(rem * step);
+        float step  = (_tblExpSpeed[idx + 1] - _tblExpSpeed[idx]) / 10;
+        uint8_t out = _tblExpSpeed[idx] + uint8_t(rem * step);
 
+        out = constrain(out, 0, 255);
         out = map(out, 0, 255, 0, _max_pwm);
         return (speed < 0) ? -out : out;
+    }
+
+    // input : -1000 ~ 1000 => -90 ~ 90
+    int16_t getExpAngle(int angle) {
+        angle = constrain(angle, -1000, 1000);
+        uint16_t  ang = abs(angle);
+        uint8_t   idx = ang / 40;
+        uint8_t   rem = ang % 40;
+        float step  = (_tblExpAngle[idx + 1] - _tblExpAngle[idx]) / 40;
+        uint8_t out = _tblExpAngle[idx] + uint8_t(rem * step);
+
+        return (angle < 0) ? -out : out;
     }
 
     void stick(int yaw, int throttle, int pitch, int roll, int btn) {
@@ -240,11 +261,11 @@ public:
 
         if (_btn_trk.isPressed(BTN_MODE0)) {
             _mode = 0;
-            LOG("mode:%d\n", _mode);
+            LOGI("mode:%d\n", _mode);
         }
         if (_btn_trk.isPressed(BTN_MODE1)) {
             _mode = 1;
-            LOG("mode:%d\n", _mode);
+            LOGI("mode:%d\n", _mode);
         }
         if (_btn_trk.isToggled()) {
             int *pData = new int[1];
@@ -255,11 +276,13 @@ public:
         if (_mode == 0) {
             int speedL = map(throttle, 1000, 2000, -255, 255);
             int speedR = map(pitch,    1000, 2000, -255, 255);
-            _pActuator->setMotor(limitSpeed(speedL), limitSpeed(speedR));
+            _pActuator->setMotor(getExpSpeed(speedL), getExpSpeed(speedR));
         } else if (_mode == 1) {
-            _angle = map(roll,     1000, 2000,  -60,  60);
+            int angle = map(roll,  1000, 2000, -1000, 1000);
             int speed = map(throttle, 1000, 2000, -255, 255);
-            _pActuator->drive(_angle, limitSpeed(speed));
+            _angle = getExpAngle(angle);
+            _pActuator->drive(_angle, getExpSpeed(speed));
+            // LOGI("roll:%4d -> angle:%4d, %3d\n", roll, angle, _angle);
         }
 
         _btn_trk.end();
@@ -341,7 +364,7 @@ void task_lidar(void* arg) {
     task_param_t *param = (task_param_t*)arg;
     CommService *pSvc = param->comm;
 
-    LOG("task lidar started\n");
+    LOGI("task lidar started\n");
     pLidar->setup();
     pLidar->enable(true);
     while (true) {
@@ -355,7 +378,7 @@ void task_lidar(void* arg) {
                 pFrame = pLidar->getScans();
                 if (pSvc && pFrame) {
                     pFrame->aux = *(param->aux);
-                    // LOG("> scans:%3d\n", pFrame->scan_num);
+                    // LOGI("> scans:%3d\n", pFrame->scan_num);
                     pSvc->send(CMD_LIDAR, (uint8_t*)pFrame, sizeof(YDLidarX2::scan_frame_t));
                 }
                 break;
@@ -392,7 +415,7 @@ void setup() {
     Serial.setDebugOutput(true);
     esp_log_level_set("*", ESP_LOG_WARN);
 
-    LOG("setup start !!! : heap:%d, psram:%d\n", ESP.getFreeHeap(), ESP.getPsramSize());
+    LOGI("setup start !!! : heap:%d, psram:%d\n", ESP.getFreeHeap(), ESP.getPsramSize());
     pinMode(PIN_LED, OUTPUT);
 
     _pCar->setup();
@@ -413,9 +436,9 @@ void loop() {
     if (_joy.isConnecting()) {
         _joy.connect();
         if (_joy.isConnected()) {
-            LOG("Connected to Joystick\n");
+            LOGI("Connected to Joystick\n");
         } else {
-            LOG("Failed to connect to Joystick\n");
+            LOGI("Failed to connect to Joystick\n");
         }
     }
 

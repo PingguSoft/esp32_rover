@@ -51,8 +51,6 @@ public:
     friend void isrHandlerPCNT(void *arg);
 
 private:
-    uint8_t limitSpeed(int speed);
-
     // for tracking odometry
     uint8_t  _unit;
     long     _ticks_mult;
