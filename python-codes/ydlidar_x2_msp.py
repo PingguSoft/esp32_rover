@@ -284,8 +284,10 @@ class Robot(object):
         xlist = []
         ylist = []
         for i in range(start, end, 1):
-            theta = 180 - (angle_res * i)                       # lidar installed with -90 degree and rotate CW
-            dist = self._frame['scans'][i] / self._scale_div    # but screen coordinates CCW so 180 -
+            # lidar installed with -90 degree and rotate CW
+            theta = 180 - (angle_res * i)
+            # but screen coordinates CCW so 180 -
+            dist = self._frame['scans'][i] / self._scale_div
             x = dist * math.cos(math.radians(theta))
             y = dist * math.sin(math.radians(theta))    # screen y is reversed
             xlist.append(x)
