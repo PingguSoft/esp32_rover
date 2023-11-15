@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib.lines as lines
 from datetime import datetime
 import cv2
+from pyplotutil import PyplotUtil
 
 plt.switch_backend('agg')
 
@@ -53,11 +54,10 @@ class Robot(object):
         self._lidar_traj = []
         self._scan_before = None
         #
-        self._fig = None
-        self._axes = None
-        self._canvas = {'lidar': {'sig': threading.Event(), 'ax': None, 'func': self.show_lidar_image},
-                        'pose': {'sig': threading.Event(), 'ax': None, 'func': self.show_lidar_pose},
-                        'slam': {'sig': threading.Event(), 'ax': None, 'func': None}}
+        self._canvas = {'lidar': PyplotUtil(figsize=(5, 5)),
+                        'cv': PyplotUtil(figsize=(2, 2)),
+                        'pose': PyplotUtil(figsize=(5, 5)),
+                        }
 
     def open(self, host, port):
         self._port = port
@@ -141,9 +141,19 @@ class Robot(object):
                 self._frame = {'ts': 0, 'aux': 0, 'scan_num': 0, 'scans': None}
                 self._frame['aux'] = y[idx]
                 self._frame['scans'] = x[idx]
-                self._canvas['lidar']['sig'].set()
 
-                self.calc_lidar_odometry(self._frame)
+                self._canvas['lidar'].set(200)
+                self.draw_lidar_image(self._canvas['lidar'].get_ax(), self._frame, 'black')
+                self._canvas['lidar'].flip(cv2.COLOR_RGB2BGR)
+
+                self._canvas['cv'].set(200, color='black', axis=False)
+                self.draw_lidar_image(self._canvas['cv'].get_ax(), self._frame, 'white', False)
+                self._canvas['cv'].flip(cv2.COLOR_RGB2GRAY)
+
+                self._canvas['pose'].set(200)
+                if self.calc_lidar_odometry(self._frame):
+                    self.draw_lidar_pose(self._canvas['pose'].get_ax())
+                    self._canvas['pose'].flip(cv2.COLOR_RGB2BGR)
 
                 try:
                     key = self._queue.get(block=is_block)
@@ -183,6 +193,7 @@ class Robot(object):
         self._thread.join()
 
     def calc_lidar_odometry(self, frame):
+        ret = True
         scan_current = pol2cart(self._lidar.angles, np.array(frame['scans']).reshape(-1, 600) / self._scale_div)
         if self._scan_before is not None:
             scan_before_global = localToGlobal(self._pose, self._scan_before)
@@ -195,8 +206,10 @@ class Robot(object):
             frame = np.ones((3, scan_current_global.shape[0]))
             frame[:2, :] = scan_current_global.T
             self._result = (T @ frame)[:2, :].T
-            self._canvas['pose']['sig'].set()
+        else:
+            ret = False
         self._scan_before = scan_current
+        return ret
 
     def handle_keys(self, key):
         if key == ord('r'):
@@ -230,11 +243,22 @@ class Robot(object):
             self._frame['scans'][i] = struct.unpack('<H', data[7+2*i:9+2*i])[0]
         # print(f"{self._frame['ts']:8d} : {self._frame['aux']:3d}, {self._frame['scan_num']:3d}")
 
-        self.calc_lidar_odometry(self._frame)
         if self._is_record and self._log_file:
             self._log_file.write(f"{self._frame['aux']:3d}, {self._frame['scans']}\n")
             # print(f"{self._frame['aux']:3d}, {self._frame['scans']}")
-        self._canvas['lidar']['sig'].set()
+
+        self._canvas['lidar'].set(200)
+        self.draw_lidar_image(self._canvas['lidar'].get_ax(), self._frame, 'black')
+        self._canvas['lidar'].flip(cv2.COLOR_RGB2BGR)
+
+        self._canvas['cv'].set(200, color='black', axis=False)
+        self.draw_lidar_image(self._canvas['cv'].get_ax(), self._frame, 'white', False)
+        self._canvas['cv'].flip(cv2.COLOR_RGB2GRAY)
+
+        self._canvas['pose'].set(200)
+        if self.calc_lidar_odometry(self._frame):
+            self.draw_lidar_pose(self._canvas['pose'].get_ax())
+            self._canvas['pose'].flip(cv2.COLOR_RGB2BGR)
 
     def cmd_odometry(self, data):
         ts, self._xpos, self._ypos, self._theta = struct.unpack('<Lllf', data[0:16])
@@ -270,9 +294,12 @@ class Robot(object):
         return cmd_func_table[cmd](data)
 
     #
-    # show lidar image
+    # draw lidar image
     #
-    def show_lidar_image(self, ax):
+    def draw_lidar_image(self, ax, frame, color, deco=True):
+        if deco:
+            ax.plot(0, 0, "go", markersize=8)
+
         angle_res = 0.6
         start = int(0 / angle_res)
         end = int(360 / angle_res)
@@ -287,40 +314,43 @@ class Robot(object):
             # lidar installed with -90 degree and rotate CW
             theta = 180 - (angle_res * i)
             # but screen coordinates CCW so 180 -
-            dist = self._frame['scans'][i] / self._scale_div
+            dist = frame['scans'][i] / self._scale_div
             x = dist * math.cos(math.radians(theta))
             y = dist * math.sin(math.radians(theta))    # screen y is reversed
             xlist.append(x)
             ylist.append(y)
-        ax.plot(xlist, ylist, 'o', markersize=1, color='black')
-        ax.plot(xlist[roi_start:roi_end], ylist[roi_start:roi_end], 'o', markersize=1, color='red')
+        ax.plot(xlist, ylist, 'o', markersize=1, color=color)
 
-        # draw pose direction
-        if self._log_file is not None:
-            self._theta = math.radians(self._frame['aux'])
+        if deco:
+            ax.plot(xlist[roi_start:roi_end], ylist[roi_start:roi_end], 'o', markersize=1, color='red')
 
-        x = int(50 * math.cos((math.pi / 2) - self._theta))
-        y = int(50 * math.sin((math.pi / 2) - self._theta))
-        line = lines.Line2D([0, x], [0, y], lw=2, color='cyan', axes=ax)
-        ax.add_line(line)
+        if deco:
+            # draw pose direction
+            if self._log_file is not None:
+                self._theta = math.radians(frame['aux'])
 
-        # draw trajectory
-        xlist = []
-        ylist = []
-        for x, y in self._traj:
-            x /= self._scale_div
-            y /= self._scale_div
-            xlist.append(x)
-            ylist.append(y)
-        ax.plot(xlist, ylist, 'o', markersize=1, color='lime')
-        ax.text(ax.get_xlim()[1] - 150, ax.get_ylim()[0], self._log_msg, fontsize=10.0, color='red')
-        # draw steering angle
-        ax.text(-40, ax.get_ylim()[0], f"{self._frame['aux']:3d}", fontsize=20.0, color='red')
+            x = int(50 * math.cos((math.pi / 2) - self._theta))
+            y = int(50 * math.sin((math.pi / 2) - self._theta))
+            line = lines.Line2D([0, x], [0, y], lw=2, color='cyan', axes=ax)
+            ax.add_line(line)
+
+            # draw trajectory
+            xlist = []
+            ylist = []
+            for x, y in self._traj:
+                x /= self._scale_div
+                y /= self._scale_div
+                xlist.append(x)
+                ylist.append(y)
+            ax.plot(xlist, ylist, 'o', markersize=1, color='lime')
+            ax.text(ax.get_xlim()[1] - 150, ax.get_ylim()[0], self._log_msg, fontsize=10.0, color='red')
+            # draw steering angle
+            ax.text(-40, ax.get_ylim()[0], f"{self._frame['aux']:3d}", fontsize=20.0, color='red')
 
     #
-    # show lidar pose
+    # draw lidar pose
     #
-    def show_lidar_pose(self, ax):
+    def draw_lidar_pose(self, ax):
         if len(self._lidar_traj) > 0:
             pose = self._lidar_traj[-1]
             ax.plot(pose[0], pose[1], 'o', color='blue', markersize=3)
@@ -331,42 +361,15 @@ class Robot(object):
             ax.plot(self._result[:, 0], self._result[:, 1], 'o', markersize=1, color='black')
 
     #
-    def set_axes_default(self, ax, title):
-        ax.clear()
-        ax.set_title(title)
-        ax.set_autoscale_on(False)
-        ax.plot(0, 0, "go", markersize=8)
-        ax.axvline(0, color="lightgray", ls="--")
-        ax.axhline(0, color="lightgray", ls="--")
-        lim = 4000 / self._scale_div
-        ax.set_xlim([-lim, lim])
-        ax.set_ylim([-lim, lim])
-        ax.text(ax.get_xlim()[0], ax.get_ylim()[1], f"scale=1/{self._scale_div} mm", fontsize=10.0, color='red')
-
-    #
     def show_outputs(self):
-        if self._fig is None:
-            self._fig, self._axes = plt.subplots(1, len(self._canvas), figsize=(6 * len(self._canvas), 6))
-            self._fig.set_tight_layout(True)
-            for i, c in enumerate(self._canvas):
-                self._canvas[c]['ax'] = self._axes[i]
-
-        is_dirty = True
-        for i, c in enumerate(self._canvas):
-            if self._canvas[c]['sig'].is_set() and self._canvas[c]['func'] != None:
+        for c in self._canvas:
+            if self._canvas[c].is_updated():
+                image = self._canvas[c].get_image()
+                if image is not None:
+                    cv2.imshow(c, image)
                 # s = time.monotonic()
-                self.set_axes_default(self._canvas[c]['ax'], c)
-                self._canvas[c]['func'](self._axes[i])
                 # print(f"draw elapsed {c:10s} {time.monotonic() - s:5.3f}")
-                self._canvas[c]['sig'].clear()
-                is_dirty = True
-
-        if is_dirty:
-            self._fig.canvas.draw()
-            img = np.frombuffer(self._fig.canvas.tostring_rgb(), dtype=np.uint8)
-            img = img.reshape(self._fig.canvas.get_width_height()[::-1] + (3,))
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            cv2.imshow('images', img)
+                self._canvas[c].clear_updated()
 
         key = cv2.waitKeyEx(10)
         self.handle_keys(key)
