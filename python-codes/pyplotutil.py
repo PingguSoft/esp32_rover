@@ -4,34 +4,42 @@ import numpy as np
 
 
 class PyplotUtil(object):
-    def __init__(self, figsize):
-        self._fig, self._ax = plt.subplots(1, 1, figsize=figsize)
+    def __init__(self, row, col, figsize):
+        self._fig, self._ax = plt.subplots(row, col, figsize=figsize)
         self._fig.set_tight_layout(True)
         self._image = None
         self._updated = False
 
-    def set(self, lim, color='white', axis=True, scale_div=None):
-        self._updated = False
-        self._ax.clear()
-        self._ax.set_autoscale_on(False)
-        self._ax.set_facecolor(color)
+    def set(self, ax=None, title=None, lim=None, color='white', axis=True, scale_div=None):
+        if ax is None:
+            ax = self._ax
+
+        ax.clear()
+        if title is not None:
+            ax.set_title(title)
+        ax.set_autoscale_on(False)
+        if lim is not None:
+            ax.set_xlim([-lim, lim])
+            ax.set_ylim([-lim, lim])
+
         if axis:
-            self._ax.axvline(0, color="lightgray", ls="--")
-            self._ax.axhline(0, color="lightgray", ls="--")
+            ax.axvline(0, color="lightgray", ls="--")
+            ax.axhline(0, color="lightgray", ls="--")
         else:
-            self._ax.xaxis.set_visible(False)
-            self._ax.yaxis.set_visible(False)
-        self._ax.set_xlim([-lim, lim])
-        self._ax.set_ylim([-lim, lim])
+            ax.set_axis_off()
+
+        ax.set_facecolor(color)
         if scale_div is not None:
-            self._ax.text(self._ax.get_xlim()[0], self._ax.get_ylim()[1],
+            ax.text(ax.get_xlim()[0], ax.get_ylim()[1],
                           f"scale=1/{scale_div} mm", fontsize=10.0, color='red')
 
-    def flip(self, fmt):
+    def finish(self, fmt=None):
         self._fig.canvas.draw()
         img = np.frombuffer(self._fig.canvas.tostring_rgb(), dtype=np.uint8)
-        img = img.reshape(self._fig.canvas.get_width_height()[::-1] + (3,))
-        self._image = cv2.cvtColor(img, fmt)
+        self._image = img.reshape(self._fig.canvas.get_width_height()[::-1] + (3,))
+        if fmt is not None:
+            self._image = cv2.cvtColor(self._image, fmt)
+
         self._updated = True
         return self._image
 

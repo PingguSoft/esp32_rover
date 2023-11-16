@@ -13,11 +13,12 @@ import matplotlib.lines as lines
 from datetime import datetime
 import cv2
 from pyplotutil import PyplotUtil
+from cv_lkas import CVLkas
 
 plt.switch_backend('agg')
 
 
-class Robot(object):
+class Rover(object):
     CMD_LIDAR = 0x01
     CMD_TICKS = 0x02
     CMD_ODOMETRY = 0x03
@@ -54,10 +55,14 @@ class Robot(object):
         self._lidar_traj = []
         self._scan_before = None
         #
-        self._canvas = {'lidar': PyplotUtil(figsize=(5, 5)),
-                        'cv': PyplotUtil(figsize=(2, 2)),
-                        'pose': PyplotUtil(figsize=(5, 5)),
+        self._plot = PyplotUtil(1, 3, figsize=(6 * 3, 6))
+        self._canvas = {'lidar': self._plot.get_ax()[0],
+                        'cv': self._plot.get_ax()[1],
+                        'pose': self._plot.get_ax()[2],
                         }
+        #
+        self._plot_cv = PyplotUtil(1, 1, figsize=(2, 2))
+        self._cv_proc = CVLkas()
 
     def open(self, host, port):
         self._port = port
@@ -142,18 +147,7 @@ class Robot(object):
                 self._frame['aux'] = y[idx]
                 self._frame['scans'] = x[idx]
 
-                self._canvas['lidar'].set(200)
-                self.draw_lidar_image(self._canvas['lidar'].get_ax(), self._frame, 'black')
-                self._canvas['lidar'].flip(cv2.COLOR_RGB2BGR)
-
-                self._canvas['cv'].set(200, color='black', axis=False)
-                self.draw_lidar_image(self._canvas['cv'].get_ax(), self._frame, 'white', False)
-                self._canvas['cv'].flip(cv2.COLOR_RGB2GRAY)
-
-                self._canvas['pose'].set(200)
-                if self.calc_lidar_odometry(self._frame):
-                    self.draw_lidar_pose(self._canvas['pose'].get_ax())
-                    self._canvas['pose'].flip(cv2.COLOR_RGB2BGR)
+                self.update(self._frame)
 
                 try:
                     key = self._queue.get(block=is_block)
@@ -215,14 +209,14 @@ class Robot(object):
         if key == ord('r'):
             print("reset !!")
             self._traj = []
-            self._msp.send(Robot.CMD_RESET, None, 0)
+            self._msp.send(Rover.CMD_RESET, None, 0)
         elif key == ord('1'):
             spd = bytes([128])
-            self._msp.send(Robot.CMD_SPEED, spd, 1)
+            self._msp.send(Rover.CMD_SPEED, spd, 1)
             print("speed:128")
         elif key == ord('2'):
             spd = bytes([255])
-            self._msp.send(Robot.CMD_SPEED, spd, 1)
+            self._msp.send(Rover.CMD_SPEED, spd, 1)
             print("speed:255")
         elif key != -1:
             self._queue.put(key)
@@ -247,18 +241,8 @@ class Robot(object):
             self._log_file.write(f"{self._frame['aux']:3d}, {self._frame['scans']}\n")
             # print(f"{self._frame['aux']:3d}, {self._frame['scans']}")
 
-        self._canvas['lidar'].set(200)
-        self.draw_lidar_image(self._canvas['lidar'].get_ax(), self._frame, 'black')
-        self._canvas['lidar'].flip(cv2.COLOR_RGB2BGR)
+        self.update(self._frame)
 
-        self._canvas['cv'].set(200, color='black', axis=False)
-        self.draw_lidar_image(self._canvas['cv'].get_ax(), self._frame, 'white', False)
-        self._canvas['cv'].flip(cv2.COLOR_RGB2GRAY)
-
-        self._canvas['pose'].set(200)
-        if self.calc_lidar_odometry(self._frame):
-            self.draw_lidar_pose(self._canvas['pose'].get_ax())
-            self._canvas['pose'].flip(cv2.COLOR_RGB2BGR)
 
     def cmd_odometry(self, data):
         ts, self._xpos, self._ypos, self._theta = struct.unpack('<Lllf', data[0:16])
@@ -273,7 +257,7 @@ class Robot(object):
     def cmd_button(self, data):
         btn = struct.unpack('<I', data[0:4])[0]
         # print(f"{btn=:4x}")
-        if (btn & Robot.BTN_START) == Robot.BTN_START:
+        if (btn & Rover.BTN_START) == Rover.BTN_START:
             self._is_record = not self._is_record
 
             if self._is_record and self._log_file is None:
@@ -287,16 +271,32 @@ class Robot(object):
                 self._log_file = None
 
     def cmd_callback(self, cmd, data):
-        cmd_func_table = {Robot.CMD_LIDAR: self.cmd_lidar,
-                          Robot.CMD_ODOMETRY: self.cmd_odometry,
-                          Robot.CMD_TICKS: self.cmd_ticks,
-                          Robot.CMD_BUTTON: self.cmd_button}
+        cmd_func_table = {Rover.CMD_LIDAR: self.cmd_lidar,
+                          Rover.CMD_ODOMETRY: self.cmd_odometry,
+                          Rover.CMD_TICKS: self.cmd_ticks,
+                          Rover.CMD_BUTTON: self.cmd_button}
         return cmd_func_table[cmd](data)
+
+    #
+    # update
+    #
+    def update(self, frame):
+        self._plot.set(ax=self._canvas['lidar'], title='lidar', lim=200, scale_div=self._scale_div)
+        self.draw_lidar_image(self._canvas['lidar'], frame, 'black', 6000)
+
+        self._plot.set(ax=self._canvas['cv'], title='cv', lim=200)
+        self.draw_cv_image(self._canvas['cv'], frame)
+
+        # self._plot.set(ax=self._canvas['pose'], title='pose', lim=200, scale_div=self._scale_div)
+        # if self.calc_lidar_odometry(frame):
+        #     self.draw_lidar_pose(self._canvas['pose'])
+
+        self._plot.finish(cv2.COLOR_RGB2BGR)
 
     #
     # draw lidar image
     #
-    def draw_lidar_image(self, ax, frame, color, deco=True):
+    def draw_lidar_image(self, ax, frame, color, max_dist, deco=True):
         if deco:
             ax.plot(0, 0, "go", markersize=8)
 
@@ -314,15 +314,21 @@ class Robot(object):
             # lidar installed with -90 degree and rotate CW
             theta = 180 - (angle_res * i)
             # but screen coordinates CCW so 180 -
-            dist = frame['scans'][i] / self._scale_div
+            dist = frame['scans'][i]
+            if dist > max_dist:
+                continue
+
+            dist /= self._scale_div
             x = dist * math.cos(math.radians(theta))
             y = dist * math.sin(math.radians(theta))    # screen y is reversed
             xlist.append(x)
             ylist.append(y)
-        ax.plot(xlist, ylist, 'o', markersize=1, color=color)
 
         if deco:
+            ax.plot(xlist, ylist, 'o', markersize=1, color=color)
             ax.plot(xlist[roi_start:roi_end], ylist[roi_start:roi_end], 'o', markersize=1, color='red')
+        else:
+            ax.plot(xlist[roi_start:roi_end], ylist[roi_start:roi_end], 'o', markersize=1, color=color)
 
         if deco:
             # draw pose direction
@@ -360,16 +366,25 @@ class Robot(object):
         if self._result is not None:
             ax.plot(self._result[:, 0], self._result[:, 1], 'o', markersize=1, color='black')
 
+
+    #
+    # draw CV image
+    #
+    def draw_cv_image(self, ax:plt.Axes, frame):
+        self._plot_cv.set(title=None, lim=200, color='white', axis=False)
+        self.draw_lidar_image(self._plot_cv.get_ax(), frame, 'black', 500, False)
+        img = 255 - self._plot_cv.finish()  # invert
+        img_seg, img_head, angle = self._cv_proc.process(img)
+        ax.imshow(img_seg,  origin='upper', extent=(-200, 0, 0, 200))
+        ax.imshow(img_head, origin='upper', extent=(0, 200, 0, 200))
+
     #
     def show_outputs(self):
-        for c in self._canvas:
-            if self._canvas[c].is_updated():
-                image = self._canvas[c].get_image()
-                if image is not None:
-                    cv2.imshow(c, image)
-                # s = time.monotonic()
-                # print(f"draw elapsed {c:10s} {time.monotonic() - s:5.3f}")
-                self._canvas[c].clear_updated()
+        if self._plot.is_updated():
+            image = self._plot.get_image()
+            if image is not None:
+                cv2.imshow("outputs", image)
+            self._plot.clear_updated()
 
         key = cv2.waitKeyEx(10)
         self.handle_keys(key)
@@ -380,7 +395,7 @@ class Robot(object):
 # main
 #
 if __name__ == "__main__":
-    robot = Robot()
+    robot = Rover()
     # robot.open(host="192.168.0.155", port=8080)
     robot.open_file("train_01.log")
 

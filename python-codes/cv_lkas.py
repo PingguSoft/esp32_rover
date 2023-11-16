@@ -84,12 +84,12 @@ class CVLkas(object):
                     if x1 > right_region_boundary and x2 > right_region_boundary:
                         right_fit.append((slope, intercept))
 
-        left_fit_average = np.average(left_fit, axis=0)
         if len(left_fit) > 0:
+            left_fit_average = np.average(left_fit, axis=0)
             lane_lines.append(self.make_points(frame, left_fit_average))
 
-        right_fit_average = np.average(right_fit, axis=0)
         if len(right_fit) > 0:
+            right_fit_average = np.average(right_fit, axis=0)
             lane_lines.append(self.make_points(frame, right_fit_average))
 
         logging.debug("lane lines: %s" % lane_lines)  # [[[316, 720, 484, 432]], [[1009, 720, 718, 432]]]
@@ -150,7 +150,7 @@ class CVLkas(object):
     def process(self, img):
         img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         line_segments = self.detect_line_segments(img_gray)
-        line_segment_image = self.display_lines(img, line_segments, line_color=(255, 0, 0), line_width=1)
+        line_segment_image = self.display_lines(img, line_segments, line_color=(255, 0, 0), line_width=2)
         lane_lines = self.average_slope_intercept(img, line_segments)
         lane_lines_image = self.display_lines(img, lane_lines, line_color=(255, 0, 0), line_width=2)
 
